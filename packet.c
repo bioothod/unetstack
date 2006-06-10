@@ -21,7 +21,6 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/socket.h>
 #include <sys/poll.h>
 
 #include <stdio.h>
@@ -30,6 +29,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <signal.h>
+#include <netdb.h>
 
 #include <arpa/inet.h>
 #include <netpacket/packet.h>
@@ -41,17 +41,36 @@
 #include "sys.h"
 
 static int need_exit;
-static int alarm_timeout = 5;
-
-#define NIPQUAD(addr) \
-	((unsigned char *)&addr)[0], \
-	((unsigned char *)&addr)[1], \
-	((unsigned char *)&addr)[2], \
-	((unsigned char *)&addr)[3]
+static int packet_socket;
+//static int alarm_timeout = 5;
 
 static void term_signal(int signo)
 {
 	need_exit = signo;
+}
+
+int packet_send(struct nc_buff *ncb)
+{
+	struct pollfd pfd;
+	int err;
+
+	pfd.fd = packet_socket;
+	pfd.events = POLLOUT;
+	pfd.revents = 0;
+
+	if (poll(&pfd, 1, 1000) <= 0)
+		return -1;
+
+	if (!(pfd.revents & POLLOUT))
+		return -1;
+
+	err = sendto(pfd.fd, ncb->head, ncb->size, 0, NULL, 0);
+	if (err < 0) {
+		ulog_err("sendto");
+		return err;
+	}
+
+	return 0;
 }
 
 static int packet_create_socket(void)
@@ -59,7 +78,7 @@ static int packet_create_socket(void)
 	int s;
 	struct sockaddr_ll ll;
 
-	s = socket(PF_PACKET, SOCK_DGRAM, 0);
+	s = socket(PF_PACKET, SOCK_RAW, 0);
 	if (s == -1) {
 		ulog_err("socket");
 		return -1;
@@ -80,19 +99,14 @@ static int packet_create_socket(void)
 	return s;
 }
 
-static int packet_process_tcp(struct iphdr *iph)
+void packet_dump(__u8 *data, unsigned int size)
 {
-	struct tcphdr *th;
+	unsigned int i;
 
-	th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
-
-	ulog("%u.%u.%u.%u:%u -> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, flags: syn: %u, ack: %u, psh: %u, rst: %u, fin: %u.\n",
-			NIPQUAD(iph->saddr), ntohs(th->source),
-			NIPQUAD(iph->daddr), ntohs(th->dest),
-			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window),
-			th->syn, th->ack, th->psh, th->rst, th->fin);
-
-	return 0;
+	ulog("dump: size: %u: ", size);
+	for (i=0; i<min_t(unsigned int, size, 128); ++i)
+		uloga("%02x ", data[i]);
+	uloga("\n");
 }
 
 static int packet_process(int s)
@@ -101,7 +115,6 @@ static int packet_process(int s)
 	int err;
 	struct sockaddr_in from;
 	socklen_t from_len = sizeof(struct sockaddr_in);
-	struct iphdr *iph;
 	struct pollfd pfd;
 
 	pfd.fd = s;
@@ -120,37 +133,102 @@ static int packet_process(int s)
 		return err;
 	}
 
-	iph = (struct iphdr *)&buf[0];
-#if 0
-	ulog("%u.%u.%u.%u -> %u.%u.%u.%u, size: %d.\n",
-			NIPQUAD(iph->saddr), NIPQUAD(iph->daddr), err);
-#endif
-	switch (iph->protocol) {
-		case IPPROTO_TCP:
-			err = packet_process_tcp(iph);
-			break;
-		default:
-			err = -ENODEV;
-			break;
-	}
-
-
-	return err;
+	return packet_eth_process(buf, err);
 }
 
-int main()
+static unsigned int packet_convert_addr(char *addr_str, unsigned int *addr)
 {
-	int s;
+	struct hostent *h;
 
-	s = packet_create_socket();
-	if (s == -1)
+	h = gethostbyname(addr_str);
+	if (!h) {
+		ulog_err("%s: Failed to get address of %s", __func__, addr_str);
+		return -1;
+	}
+	
+	memcpy(addr, h->h_addr_list[0], 4);
+	return 0;
+}
+
+static void usage(const char *p)
+{
+	ulog("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -h\n", p);
+}
+
+int main(int argc, char *argv[])
+{
+	int err, ch;
+	struct unetchannel unc;
+	struct netchannel *nc;
+	char *saddr, *daddr;
+	__u32 src, dst;
+	__u16 sport, dport;
+	__u8 proto;
+	unsigned char buf[4096];
+
+	saddr = "192.168.0.48";
+	daddr = "192.168.4.78";
+	sport = htons(1234);
+	dport = htons(22);
+	proto = IPPROTO_TCP;
+
+	while ((ch = getopt(argc, argv, "s:d:S:D:hp:")) != -1) {
+		switch (ch) {
+			case 'p':
+				proto = atoi(optarg);
+				break;
+			case 'D':
+				dport = htons(atoi(optarg));
+				break;
+			case 'S':
+				sport = htons(atoi(optarg));
+				break;
+			case 'd':
+				daddr = optarg;
+				break;
+			case 's':
+				saddr = optarg;
+				break;
+			default:
+				usage(argv[0]);
+				return 0;
+		}
+	}
+
+	if (packet_convert_addr(saddr, &src) || packet_convert_addr(daddr, &dst)) {
+		usage(argv[0]);
+		return -1;
+	}
+
+	err = netchannel_init();
+	if (err)
+		return err;
+
+	packet_socket = packet_create_socket();
+	if (packet_socket == -1)
 		return -1;
 
 	signal(SIGTERM, term_signal);
 	signal(SIGINT, term_signal);
 
+	unc.src = src;
+	unc.dst = dst;
+	unc.sport = sport;
+	unc.dport = dport;
+	unc.proto = proto;
+	
+	nc = netchannel_create(&unc);
+	if (!nc)
+		return -1;
+
+	err = netchannel_connect(nc);
+	if (err)
+		return -1;
+
 	while (!need_exit) {
-		packet_process(s);
+		err = packet_process(packet_socket);
+		if (!err)
+			netchannel_recv(nc, buf, sizeof(buf));
 	}
 
 	return 0;

@@ -36,10 +36,75 @@
 #include <net/ethernet.h>
 
 #include <netinet/ip.h>
+#include <netinet/tcp.h>
 
 #include "sys.h"
 
-int packet_ip_send(struct nc_buff *ncb)
+/*
+ * Not very optimal though...
+ */
+static void packet_ip_checksum(struct iphdr *iph)
 {
-	return 0;
+	__u32 csum = 0;
+	int i;
+
+	for (i=0; i<iph->ihl; ++i)
+		csum += ((__u32 *)iph)[i];
+
+	iph->check = csum;
+}
+
+int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
+{
+	struct iphdr *iph;
+
+	iph = ncb_put(ncb, sizeof(struct iphdr));
+	if (!iph)
+		return -ENOMEM;
+
+	iph->saddr = dst->saddr;
+	iph->daddr = dst->daddr;
+	iph->check = 0;
+	iph->tos = 0;
+	iph->tot_len = ncb->size;
+	iph->ttl = 64;
+	iph->id = 0;
+	iph->frag_off = 0;
+	iph->version = 4;
+	iph->ihl = 5;
+	iph->protocol = dst->proto;
+
+	packet_ip_checksum(iph);
+
+	return packet_eth_send(ncb, dst);
+}
+
+int packet_ip_process(struct nc_buff *ncb)
+{
+	struct iphdr *iph;
+	struct unetchannel unc;
+	int err;
+
+	iph = ncb_get(ncb, sizeof(struct iphdr));
+	if (!iph)
+		return -ENOMEM;
+		
+	unc.proto = iph->protocol;
+	unc.src = iph->saddr;
+	unc.dst = iph->daddr;
+	unc.sport = ((__u16 *)(iph + 1))[0];
+	unc.dport = ((__u16 *)(iph + 1))[1];
+
+	err = netchannel_queue(ncb, &unc);
+
+	if (unc.proto == IPPROTO_TCP && !err) {
+		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
+		ulog("%u.%u.%u.%u:%u -> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, flags: syn: %u, ack: %u, psh: %u, rst: %u, fin: %u.\n",
+			NIPQUAD(iph->saddr), ntohs(th->source),
+			NIPQUAD(iph->daddr), ntohs(th->dest),
+			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window),
+			th->syn, th->ack, th->psh, th->rst, th->fin);
+	}
+
+	return err;
 }
