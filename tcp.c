@@ -35,6 +35,14 @@
 
 #include "sys.h"
 
+struct pseudohdr
+{
+	__u32		saddr, daddr;
+	__u8		empty;
+	__u8		proto;
+	__u32		len;
+} __attribute__ ((packed));
+
 static int tcp_connect(struct protocol *proto, struct netchannel *nc)
 {
 	int err = -ENOMEM;
@@ -42,13 +50,14 @@ static int tcp_connect(struct protocol *proto, struct netchannel *nc)
 	struct nc_buff *ncb;
 	unsigned int size = sizeof(struct tcphdr) + sizeof(struct iphdr) + sizeof(struct ether_header);
 	struct nc_route dst;
+	struct pseudohdr *p;
 
 	ncb = ncb_alloc(size);
 	if (!ncb)
 		goto err_out_free;
 
 	err = -EINVAL;
-	if (ncb_get(ncb, size))
+	if (!ncb_get(ncb, size))
 		goto err_out_free;
 
 	th = ncb_put(ncb, sizeof(struct tcphdr));
@@ -57,15 +66,31 @@ static int tcp_connect(struct protocol *proto, struct netchannel *nc)
 
 	th->source = nc->unc.sport;
 	th->dest = nc->unc.dport;
-	th->seq = 100;
+	th->seq = htonl(12345);
 	th->ack = 0;
 	
 	th->syn = 1;
-	th->window = 1024;
-	th->check = 0;
+	th->window = htons(1024);
+	th->doff = 5;
+
+	p = (struct pseudohdr *)(((__u8 *)th) - sizeof(struct pseudohdr));
+	memset(p, 0, sizeof(*p));
 	
-	return 0;
-		
+	p->saddr = htonl(nc->unc.src);
+	p->daddr = htonl(nc->unc.dst);
+	p->proto = IPPROTO_TCP;
+	p->len = htonl(ncb->size);
+	
+	th->check = in_csum((__u16 *)p, sizeof(struct pseudohdr) + ncb->size);
+
+	err = route_get(nc->unc.dst, nc->unc.src, &dst);
+	if (err)
+		goto err_out_free;
+
+	dst.proto = nc->unc.proto;
+
+	return packet_ip_send(ncb, &dst);
+
 err_out_free:
 	ncb_free(ncb);
 	return err;

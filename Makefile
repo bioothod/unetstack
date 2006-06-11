@@ -6,7 +6,7 @@ CC	:= gcc
 CFLAGS	:= -I$(KDIR)/include -W -Wall -DDEBUG -g
 LDFLAGS := -lc
 
-OBJS := tcp.o udp.o ip.o eth.o netchannel.o packet.o ncbuff.o
+OBJS := tcp.o udp.o ip.o eth.o netchannel.o packet.o ncbuff.o route.o
 TARGETS	:= stack
 
 all: $(OBJS) $(TARGETS)

@@ -49,10 +49,11 @@ static void term_signal(int signo)
 	need_exit = signo;
 }
 
-int packet_send(struct nc_buff *ncb)
+int packet_send(struct nc_buff *ncb, struct nc_route *dst)
 {
 	struct pollfd pfd;
 	int err;
+	struct sockaddr_ll ll;
 
 	pfd.fd = packet_socket;
 	pfd.events = POLLOUT;
@@ -64,7 +65,14 @@ int packet_send(struct nc_buff *ncb)
 	if (!(pfd.revents & POLLOUT))
 		return -1;
 
-	err = sendto(pfd.fd, ncb->head, ncb->size, 0, NULL, 0);
+	ll.sll_family = PF_PACKET;
+	ll.sll_protocol = htons(ETH_P_IP);
+	ll.sll_hatype = PACKET_OTHERHOST;
+	ll.sll_halen = ETH_ALEN;
+	ll.sll_ifindex = 2;
+	memcpy(ll.sll_addr, dst->edst, ll.sll_halen);
+
+	err = sendto(pfd.fd, ncb->head, ncb->size, 0, (struct sockaddr *)&ll, sizeof(struct sockaddr_ll));
 	if (err < 0) {
 		ulog_err("sendto");
 		return err;
@@ -166,10 +174,10 @@ int main(int argc, char *argv[])
 	__u8 proto;
 	unsigned char buf[4096];
 
-	saddr = "192.168.0.48";
-	daddr = "192.168.4.78";
-	sport = htons(1234);
-	dport = htons(22);
+	saddr = "10.0.0.5";
+	daddr = "10.0.0.1";
+	sport = 1234;
+	dport = 25;
 	proto = IPPROTO_TCP;
 
 	while ((ch = getopt(argc, argv, "s:d:S:D:hp:")) != -1) {
@@ -178,10 +186,10 @@ int main(int argc, char *argv[])
 				proto = atoi(optarg);
 				break;
 			case 'D':
-				dport = htons(atoi(optarg));
+				dport = atoi(optarg);
 				break;
 			case 'S':
-				sport = htons(atoi(optarg));
+				sport = atoi(optarg);
 				break;
 			case 'd':
 				daddr = optarg;
@@ -204,6 +212,10 @@ int main(int argc, char *argv[])
 	if (err)
 		return err;
 
+	err = route_init();
+	if (err)
+		return err;
+
 	packet_socket = packet_create_socket();
 	if (packet_socket == -1)
 		return -1;
@@ -211,20 +223,20 @@ int main(int argc, char *argv[])
 	signal(SIGTERM, term_signal);
 	signal(SIGINT, term_signal);
 
-	unc.src = src;
-	unc.dst = dst;
-	unc.sport = sport;
-	unc.dport = dport;
+	unc.src = htonl(src);
+	unc.dst = htonl(dst);
+	unc.sport = htons(sport);
+	unc.dport = htons(dport);
 	unc.proto = proto;
 	
 	nc = netchannel_create(&unc);
 	if (!nc)
 		return -1;
-
+	
 	err = netchannel_connect(nc);
 	if (err)
 		return -1;
-
+	
 	while (!need_exit) {
 		err = packet_process(packet_socket);
 		if (!err)

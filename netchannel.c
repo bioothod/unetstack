@@ -145,8 +145,8 @@ static inline void netchannel_dump_info_unc(struct unetchannel *unc, char *prefi
 	__u32 src, dst;
 	__u16 sport, dport;
 	
-	dst = unc->dst;
-	src = unc->src;
+	dst = ntohl(unc->dst);
+	src = ntohl(unc->src);
 	dport = ntohs(unc->dport);
 	sport = ntohs(unc->sport);
 

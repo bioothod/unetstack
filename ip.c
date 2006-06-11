@@ -40,20 +40,6 @@
 
 #include "sys.h"
 
-/*
- * Not very optimal though...
- */
-static void packet_ip_checksum(struct iphdr *iph)
-{
-	__u32 csum = 0;
-	int i;
-
-	for (i=0; i<iph->ihl; ++i)
-		csum += ((__u32 *)iph)[i];
-
-	iph->check = csum;
-}
-
 int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 {
 	struct iphdr *iph;
@@ -62,20 +48,29 @@ int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 	if (!iph)
 		return -ENOMEM;
 
-	iph->saddr = dst->saddr;
-	iph->daddr = dst->daddr;
+	iph->saddr = htonl(dst->src);
+	iph->daddr = htonl(dst->dst);
 	iph->check = 0;
 	iph->tos = 0;
-	iph->tot_len = ncb->size;
+	iph->tot_len = htons(ncb->size);
 	iph->ttl = 64;
 	iph->id = 0;
-	iph->frag_off = 0;
+	iph->frag_off = htons(0x4000);
 	iph->version = 4;
 	iph->ihl = 5;
 	iph->protocol = dst->proto;
 
-	packet_ip_checksum(iph);
-
+	iph->check = in_csum((__u16 *)iph, iph->ihl*4);
+		
+	if (dst->proto == IPPROTO_TCP) {
+		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
+		ulog("%u.%u.%u.%u:%u -> %u.%u.%u.%u:%u : "
+			"seq: %u, ack: %u, win: %u, flags: syn: %u, ack: %u, psh: %u, rst: %u, fin: %u.\n",
+			NIPQUAD(iph->saddr), ntohs(th->source),
+			NIPQUAD(iph->daddr), ntohs(th->dest),
+			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window),
+			th->syn, th->ack, th->psh, th->rst, th->fin);
+	}
 	return packet_eth_send(ncb, dst);
 }
 

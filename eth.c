@@ -41,15 +41,15 @@ int packet_eth_send(struct nc_buff *ncb, struct nc_route *dst)
 {
 	struct ether_header *eth;
 
-	eth = ncb_put(ncb, sizeof(struct nc_buff));
+	eth = ncb_put(ncb, sizeof(struct ether_header));
 	if (!eth)
 		return -1;
 
-	memcpy(eth->ether_dhost, dst->eth_dst, ETH_ALEN);
-	memcpy(eth->ether_shost, dst->eth_src, ETH_ALEN);
+	memcpy(eth->ether_dhost, dst->edst, ETH_ALEN);
+	memcpy(eth->ether_shost, dst->esrc, ETH_ALEN);
 	eth->ether_type = htons(ETH_P_IP);
 
-	return packet_send(ncb);
+	return packet_send(ncb, dst);
 }
 
 int packet_eth_process(void *data, unsigned int size)

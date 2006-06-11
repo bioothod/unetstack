@@ -60,8 +60,8 @@ struct nc_buff
 
 struct nc_route
 {
-	__u32			saddr, daddr;
-	__u8			eth_dst[ETH_ALEN], eth_src[ETH_ALEN];
+	__u32			src, dst;
+	__u8			edst[ETH_ALEN], esrc[ETH_ALEN];
 	__u8			proto;
 };
 
@@ -70,7 +70,7 @@ extern void ncb_free(struct nc_buff *);
 
 extern int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst);
 extern int packet_eth_send(struct nc_buff *ncb, struct nc_route *dst);
-extern int packet_send(struct nc_buff *ncb);
+extern int packet_send(struct nc_buff *ncb, struct nc_route *dst);
 
 void packet_dump(__u8 *data, unsigned int size);
 
@@ -79,7 +79,7 @@ int packet_eth_process(void *data, unsigned int size);
 
 static inline void *ncb_put(struct nc_buff *ncb, unsigned int size)
 {
-	if (ncb->head - ncb->data < size) {
+	if (ncb->head < ncb->data + size) {
 		ulog("%s: head: %p, data: %p, size: %u, req_size: %u.\n",
 				__func__, ncb->head, ncb->data, ncb->size, size);
 		return NULL;
@@ -92,7 +92,7 @@ static inline void *ncb_put(struct nc_buff *ncb, unsigned int size)
 static inline void *ncb_get(struct nc_buff *ncb, unsigned int size)
 {
 	void *head = ncb->head;
-	if (ncb->tail - ncb->head < size) {
+	if (ncb->tail < ncb->head + size) {
 		ulog("%s: head: %p, data: %p, size: %u, req_size: %u.\n",
 				__func__, ncb->head, ncb->data, ncb->size, size);
 		return NULL;
@@ -173,6 +173,13 @@ struct hlist_node {
 #define max_t(type,x,y) \
 	({ type __x = (x); type __y = (y); __x > __y ? __x: __y; })
 
+#undef offsetof
+#ifdef __compiler_offsetof
+#define offsetof(TYPE,MEMBER) __compiler_offsetof(TYPE,MEMBER)
+#else
+#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+#endif
+	
 #define container_of(ptr, type, member) ({			\
         const typeof( ((type *)0)->member ) *__mptr = (ptr);	\
         (type *)( (char *)__mptr - offsetof(type,member) );})
@@ -255,5 +262,47 @@ struct netchannel *netchannel_create(struct unetchannel *unc);
 void netchannel_remove(struct netchannel *nc);
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_connect(struct netchannel *nc);
+
+static inline __u16 in_csum(__u16 *addr, unsigned int len)
+{
+	unsigned int nleft = len;
+	__u16 *w = addr;
+	unsigned int sum = 0;
+	__u16 answer = 0;
+
+	while (nleft > 1) {
+		sum += *w++;
+		nleft -= 2;
+	}
+						
+	if (nleft == 1) {
+		*(__u8 *)(&answer) = *(__u8 *)w;
+		sum += answer;
+	}
+							    
+	sum = (sum >> 16) + (sum & 0xffff);   /* add hi 16 to low 16 */
+	sum += (sum >> 16);                   /* add carry */
+	answer = ~sum;                        /* truncate to 16 bits */
+	return answer;
+}
+
+static inline __u32 num2ip(const __u8 a1, const __u8 a2, const __u8 a3, const __u8 a4)
+{
+	__u32 r = a1;
+
+	r <<= 8;
+	r |= a2;
+	r <<= 8;
+	r |= a3;
+	r <<= 8;
+	r |= a4;
+
+	return r;
+}
+
+extern int route_get(__u32 dst, __u32 src, struct nc_route *rt);
+extern int route_add(struct nc_route *rt);
+extern void route_fini(void);
+extern int route_init(void);
 
 #endif /* __SYS_H */
