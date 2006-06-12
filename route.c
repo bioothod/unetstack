@@ -60,16 +60,8 @@ int route_get(__u32 dst, __u32 src, struct nc_route *rt)
 
 int route_init(void)
 {
-	struct nc_route rt;
-	__u8 edst[] = {0x00, 0x00, 0x21, 0x01, 0x95, 0xD1};
-	__u8 esrc[] = {0x00, 0x08, 0x02, 0xE4, 0x40, 0xF2};
-	
-	rt.src = num2ip(10,0,0,5);
-	rt.dst = num2ip(10,0,0,1);
-	memcpy(rt.edst, edst, ETH_ALEN);
-	memcpy(rt.esrc, esrc, ETH_ALEN);
-
-	return route_add(&rt);
+	route_num = 0;
+	return 0;
 }
 
 void route_fini(void)

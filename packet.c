@@ -173,9 +173,17 @@ int main(int argc, char *argv[])
 	__u16 sport, dport;
 	__u8 proto;
 	unsigned char buf[4096];
+	__u8 edst[] = {0x00, 0x0E, 0x0C, 0x81, 0x20, 0xFF};
+	__u8 esrc[] = {0x00, 0x11, 0x09, 0x61, 0xEB, 0x0E};
+	struct nc_route rt;
+	
+	rt.src = num2ip(192,168,4,78);
+	rt.dst = num2ip(192,168,0,48);
+	memcpy(rt.edst, edst, ETH_ALEN);
+	memcpy(rt.esrc, esrc, ETH_ALEN);
 
-	saddr = "10.0.0.5";
-	daddr = "10.0.0.1";
+	saddr = "192.168.0.48";
+	daddr = "192.168.4.78";
 	sport = 1234;
 	dport = 25;
 	proto = IPPROTO_TCP;
@@ -211,8 +219,18 @@ int main(int argc, char *argv[])
 	err = netchannel_init();
 	if (err)
 		return err;
-
+	
 	err = route_init();
+	if (err)
+		return err;
+	
+	rt.src = src;
+	rt.dst = dst;
+	rt.proto = proto;
+	memcpy(rt.edst, edst, ETH_ALEN);
+	memcpy(rt.esrc, esrc, ETH_ALEN);
+
+	err = route_add(&rt);
 	if (err)
 		return err;
 
@@ -223,8 +241,8 @@ int main(int argc, char *argv[])
 	signal(SIGTERM, term_signal);
 	signal(SIGINT, term_signal);
 
-	unc.src = htonl(src);
-	unc.dst = htonl(dst);
+	unc.src = src;
+	unc.dst = dst;
 	unc.sport = htons(sport);
 	unc.dport = htons(dport);
 	unc.proto = proto;

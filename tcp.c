@@ -76,8 +76,8 @@ static int tcp_connect(struct protocol *proto, struct netchannel *nc)
 	p = (struct pseudohdr *)(((__u8 *)th) - sizeof(struct pseudohdr));
 	memset(p, 0, sizeof(*p));
 	
-	p->saddr = htonl(nc->unc.src);
-	p->daddr = htonl(nc->unc.dst);
+	p->saddr = nc->unc.src;
+	p->daddr = nc->unc.dst;
 	p->proto = IPPROTO_TCP;
 	p->len = htonl(ncb->size);
 	

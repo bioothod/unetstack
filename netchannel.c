@@ -41,6 +41,11 @@ static inline unsigned int netchannel_hash(struct unetchannel *unc)
 	h ^= h >> 16;
 	h ^= h >> 8;
 	h ^= unc->proto;
+#if 0
+	ulog("%s: %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u.\n",
+			__func__, NIPQUAD(unc->src), ntohs(unc->sport),
+			NIPQUAD(unc->dst), ntohs(unc->dport), unc->proto);
+#endif
 	return h & ((1 << 2*netchannel_hash_order) - 1);
 }
 
@@ -145,8 +150,8 @@ static inline void netchannel_dump_info_unc(struct unetchannel *unc, char *prefi
 	__u32 src, dst;
 	__u16 sport, dport;
 	
-	dst = ntohl(unc->dst);
-	src = ntohl(unc->src);
+	dst = unc->dst;
+	src = unc->src;
 	dport = ntohs(unc->dport);
 	sport = ntohs(unc->sport);
 

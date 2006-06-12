@@ -48,8 +48,8 @@ int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 	if (!iph)
 		return -ENOMEM;
 
-	iph->saddr = htonl(dst->src);
-	iph->daddr = htonl(dst->dst);
+	iph->saddr = dst->src;
+	iph->daddr = dst->dst;
 	iph->check = 0;
 	iph->tos = 0;
 	iph->tot_len = htons(ncb->size);
@@ -85,16 +85,16 @@ int packet_ip_process(struct nc_buff *ncb)
 		return -ENOMEM;
 		
 	unc.proto = iph->protocol;
-	unc.src = iph->saddr;
-	unc.dst = iph->daddr;
-	unc.sport = ((__u16 *)(iph + 1))[0];
-	unc.dport = ((__u16 *)(iph + 1))[1];
+	unc.src = iph->daddr;
+	unc.dst = iph->saddr;
+	unc.sport = ((__u16 *)(iph + 1))[1];
+	unc.dport = ((__u16 *)(iph + 1))[0];
 
 	err = netchannel_queue(ncb, &unc);
 
 	if (unc.proto == IPPROTO_TCP && !err) {
 		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
-		ulog("%u.%u.%u.%u:%u -> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, flags: syn: %u, ack: %u, psh: %u, rst: %u, fin: %u.\n",
+		ulog("recv: %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, flags: syn: %u, ack: %u, psh: %u, rst: %u, fin: %u.\n",
 			NIPQUAD(iph->saddr), ntohs(th->source),
 			NIPQUAD(iph->daddr), ntohs(th->dest),
 			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window),
