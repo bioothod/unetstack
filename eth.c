@@ -71,7 +71,6 @@ int packet_eth_process(void *data, unsigned int size)
 		goto err_out_free;
 
 	if (ntohs(eth->ether_type) != ETH_P_IP) {
-		//packet_dump(data, size);
 		err = -1;
 		goto err_out_free;
 	}
