@@ -58,13 +58,11 @@ int packet_eth_process(void *data, unsigned int size)
 	struct ether_header *eth;
 	int err = -ENOMEM;
 
-	ncb = malloc(sizeof(struct nc_buff));
+	ncb = ncb_alloc(size);
 	if (!ncb)
 		return -ENOMEM;
 
-	ncb->size = size;
-	ncb->data = ncb->head = data;
-	ncb->tail = ncb->head + ncb->size;
+	memcpy(ncb->head, data, size);
 
 	eth = ncb_get(ncb, sizeof(struct ether_header));
 	if (!eth)
@@ -82,6 +80,6 @@ int packet_eth_process(void *data, unsigned int size)
 	return 0;
 
 err_out_free:
-	free(ncb);
+	ncb_free(ncb);
 	return err;
 }
