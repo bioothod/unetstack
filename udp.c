@@ -23,13 +23,13 @@
 
 #include "sys.h"
 
-static int udp_connect(struct protocol *proto __attribute__ ((unused)),
+static int udp_connect(struct common_protocol *proto __attribute__ ((unused)),
 		struct netchannel *nc __attribute__ ((unused)))
 {
 	return 0;
 }
 
-static int udp_process_in(struct protocol *proto __attribute__ ((unused)),
+static int udp_process_in(struct common_protocol *proto __attribute__ ((unused)),
 		struct netchannel *nc __attribute__ ((unused)),
 		struct nc_buff *ncb __attribute__ ((unused)),
 		unsigned int size)
@@ -37,7 +37,7 @@ static int udp_process_in(struct protocol *proto __attribute__ ((unused)),
 	return size;
 }
 
-static int udp_process_out(struct protocol *proto __attribute__ ((unused)),
+static int udp_process_out(struct common_protocol *proto __attribute__ ((unused)),
 		struct netchannel *nc __attribute__ ((unused)),	
 		struct nc_buff *ncb __attribute__ ((unused)),
 		unsigned int size)
@@ -45,17 +45,21 @@ static int udp_process_out(struct protocol *proto __attribute__ ((unused)),
 	return size;
 }
 
-static int udp_destroy(struct protocol *proto __attribute__ ((unused)),
+static int udp_destroy(struct common_protocol *proto __attribute__ ((unused)),
 		struct netchannel *nc __attribute__ ((unused)))
 {
 	return 0;
 }
 
-struct protocol udp_protocol = {
-	.state		= 0,
+struct udp_protocol
+{
+	struct common_protocol		cproto;
+};
+
+struct common_protocol udp_protocol = {
+	.size		= sizeof(struct udp_protocol),
 	.connect	= &udp_connect,
 	.process_in	= &udp_process_in,
 	.process_out	= &udp_process_out,
 	.destroy	= &udp_destroy,
 };
-

@@ -49,6 +49,8 @@ struct nc_buff_head {
 	__u32		qlen;
 };
 
+struct netchannel;
+
 struct nc_buff
 {
 	struct nc_buff		*next;
@@ -56,6 +58,19 @@ struct nc_buff
 
 	void			*data, *head, *tail;
 	unsigned int		size, total_size;
+
+	struct netchannel	*nc;
+
+	union {
+		struct tcphdr	*th;
+		struct udphdr	*uh;
+		void		*raw;
+	} h;
+	
+	union {
+		struct iphdr	*iph;
+		void		*raw;
+	} nh;
 };
 
 struct nc_route
@@ -217,19 +232,19 @@ static inline void hlist_del(struct hlist_node *n)
 
 #define INIT_HLIST_HEAD(ptr) ((ptr)->first = NULL)
 
-extern struct protocol tcp_protocol;
-extern struct protocol udp_protocol;
+extern struct common_protocol tcp_protocol;
+extern struct common_protocol udp_protocol;
 
 struct netchannel;
 
-struct protocol
+struct common_protocol
 {
-	__u32			state;
+	unsigned int		size;
 
-	int 			(*connect)(struct protocol *, struct netchannel *);
-	int 			(*process_in)(struct protocol *, struct netchannel *, struct nc_buff *, unsigned int size);
-	int 			(*process_out)(struct protocol *, struct netchannel *, struct nc_buff *, unsigned int size);
-	int 			(*destroy)(struct protocol *, struct netchannel *);
+	int 			(*connect)(struct common_protocol *, struct netchannel *);
+	int 			(*process_in)(struct common_protocol *, struct netchannel *, struct nc_buff *, unsigned int size);
+	int 			(*process_out)(struct common_protocol *, struct netchannel *, struct nc_buff *, unsigned int size);
+	int 			(*destroy)(struct common_protocol *, struct netchannel *);
 };
 
 struct unetchannel 
@@ -247,7 +262,7 @@ struct netchannel
 
 	unsigned long long	hit;
 
-	struct protocol		*proto;
+	struct common_protocol	*proto;
 };
 
 struct netchannel_cache_head

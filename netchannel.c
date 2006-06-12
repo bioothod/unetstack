@@ -164,28 +164,32 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 {
 	struct netchannel *nc;
 	struct netchannel_cache_head *bucket;
+	struct common_protocol *proto = NULL;
 
-	if (unc->proto != IPPROTO_TCP && unc->proto != IPPROTO_UDP)
-		return NULL;
+	switch (unc->proto) {
+		case IPPROTO_UDP:
+			proto = &udp_protocol;
+			break;
+		case IPPROTO_TCP:
+			proto = &tcp_protocol;
+			break;
+		default:
+			return NULL;
+	}
 
 	bucket = netchannel_bucket(unc);
 	if (netchannel_check_full(unc, bucket))
 		return NULL;
 
-	nc = malloc(sizeof(struct netchannel));
+	nc = malloc(sizeof(struct netchannel) + proto->size);
 	if (!nc)
 		return NULL;
 
+	nc->proto = (struct common_protocol *)(nc + 1);
+	memcpy(nc->proto, proto, sizeof(struct common_protocol));
+
 	nc_buff_head_init(&nc->recv_queue);
 	memcpy(&nc->unc, unc, sizeof(struct unetchannel));
-	switch (nc->unc.proto) {
-		case IPPROTO_UDP:
-			nc->proto = &udp_protocol;
-			break;
-		case IPPROTO_TCP:
-			nc->proto = &tcp_protocol;
-			break;
-	}
 
 	hlist_add_head(&nc->node, &bucket->head);
 
@@ -221,8 +225,10 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 			size -= sz;
 			buf += sz;
 			read += sz;
-		} else 
+		} else {
+			ncb_free(ncb);
 			break;
+		}
 	}
 
 	return read;
