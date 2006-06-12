@@ -15,11 +15,19 @@ all: $(OBJS) $(TARGETS)
 stack: $(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) -o $@
 
+tcp.o:		tcp.c sys.h Makefile
+udp.o:		udp.c sys.h Makefile
+ip.o:		ip.c sys.h Makefile
+netchanenl.o:	netchanenl.c sys.h Makefile
+ncbuff.o:	ncbuff.c sys.h Makefile
+route.o:	route.c sys.h Makefile
+packet.o:	packet.c sys.h Makefile
+eth.o:		eth.c sys.h Makefile
+
 %.o:$(patsubst %.o,%.c,$<)
 	$(CC) $(CFLAGS) $(patsubst %.o,%.c,$@) -c -o $@
 
 clean:
 	rm -f *.o *~ $(TARGETS) $(LIB_OBJS)
 
-%:$(patsubst %,%.c,$<)
-%.o:$(patsubst %.o,%.c,$<)
+%: $(patsubst %,%.c,$<)
