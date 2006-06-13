@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <netdb.h>
+#include <time.h>
 
 #include <arpa/inet.h>
 #include <netpacket/packet.h>
@@ -184,8 +185,8 @@ int main(int argc, char *argv[])
 
 	saddr = "192.168.0.48";
 	daddr = "192.168.4.78";
-	sport = 1234;
-	dport = 25;
+	sport = 1111;
+	dport = 1025;
 	proto = IPPROTO_TCP;
 
 	while ((ch = getopt(argc, argv, "s:d:S:D:hp:")) != -1) {
@@ -229,6 +230,8 @@ int main(int argc, char *argv[])
 	rt.proto = proto;
 	memcpy(rt.edst, edst, ETH_ALEN);
 	memcpy(rt.esrc, esrc, ETH_ALEN);
+	
+	srand(time(NULL));
 
 	err = route_add(&rt);
 	if (err)
@@ -254,11 +257,11 @@ int main(int argc, char *argv[])
 	err = netchannel_connect(nc);
 	if (err)
 		return -1;
-	
+	ulog("Connected.\n");
 	while (!need_exit) {
 		err = packet_process(packet_socket);
 		if (!err)
-			netchannel_recv(nc, buf, sizeof(buf));
+			netchannel_recv(nc, buf, sizeof(buf)-1);
 	}
 
 	return 0;

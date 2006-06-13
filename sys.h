@@ -117,6 +117,18 @@ static inline void *ncb_get(struct nc_buff *ncb, unsigned int size)
 	return head;
 }
 
+static inline void *ncb_trim(struct nc_buff *ncb, unsigned int size)
+{
+	if (size > ncb->size) {
+		ulog("%s: head: %p, data: %p, size: %u, req_size: %u.\n",
+				__func__, ncb->head, ncb->data, ncb->size, size);
+		return NULL;
+	}
+	ncb->tail = ncb->head + size;
+	ncb->size = size;
+	return ncb->head;
+}
+
 static inline void nc_buff_head_init(struct nc_buff_head *list)
 {
 	list->prev = list->next = (struct nc_buff *)list;

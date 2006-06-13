@@ -40,16 +40,21 @@
 int packet_eth_send(struct nc_buff *ncb, struct nc_route *dst)
 {
 	struct ether_header *eth;
+	int err;
 
 	eth = ncb_put(ncb, sizeof(struct ether_header));
-	if (!eth)
+	if (!eth) {
+		ncb_free(ncb);
 		return -1;
+	}
 
 	memcpy(eth->ether_dhost, dst->edst, ETH_ALEN);
 	memcpy(eth->ether_shost, dst->esrc, ETH_ALEN);
 	eth->ether_type = htons(ETH_P_IP);
 
-	return packet_send(ncb, dst);
+	err = packet_send(ncb, dst);
+	ncb_free(ncb);
+	return err;
 }
 
 int packet_eth_process(void *data, unsigned int size)
@@ -67,6 +72,7 @@ int packet_eth_process(void *data, unsigned int size)
 	eth = ncb_get(ncb, sizeof(struct ether_header));
 	if (!eth)
 		goto err_out_free;
+
 
 	if (ntohs(eth->ether_type) != ETH_P_IP) {
 		err = -1;

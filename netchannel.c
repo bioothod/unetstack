@@ -98,6 +98,10 @@ int netchannel_queue(struct nc_buff *ncb, struct unetchannel *unc)
 	if (!nc)
 		return -ENODEV;
 
+	ulog("+ %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u, size: %u.\n",
+			NIPQUAD(unc->src), ntohs(unc->sport),
+			NIPQUAD(unc->dst), ntohs(unc->dport), ncb->size);
+
 	ncb_queue_tail(&nc->recv_queue, ncb);
 	nc->hit++;
 	return 0;
@@ -221,14 +225,16 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 		err = nc->proto->process_in(nc->proto, nc, ncb, sz);
 
 		if (err > 0) {
-			memcpy(buf, ncb->head, sz);
-			size -= sz;
-			buf += sz;
-			read += sz;
+			memcpy(buf, ncb->head, err);
+			write(1, buf, err);
+			size -= err;
+			buf += err;
+			read += err;
 		} else {
 			ncb_free(ncb);
 			break;
 		}
+		ncb_free(ncb);
 	}
 
 	return read;

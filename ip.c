@@ -64,11 +64,11 @@ int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 		
 	if (dst->proto == IPPROTO_TCP) {
 		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
-		ulog("%u.%u.%u.%u:%u -> %u.%u.%u.%u:%u : "
-			"seq: %u, ack: %u, win: %u, flags: syn: %u, ack: %u, psh: %u, rst: %u, fin: %u.\n",
+		ulog("S %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
+			"s: %u, a: %u, p: %u, r: %u, f: %u.\n",
 			NIPQUAD(iph->saddr), ntohs(th->source),
 			NIPQUAD(iph->daddr), ntohs(th->dest),
-			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window),
+			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window), th->doff,
 			th->syn, th->ack, th->psh, th->rst, th->fin);
 	}
 	return packet_eth_send(ncb, dst);
@@ -80,10 +80,13 @@ int packet_ip_process(struct nc_buff *ncb)
 	struct unetchannel unc;
 	int err;
 
-	iph = ncb_get(ncb, sizeof(struct iphdr));
+	ncb->nh.iph = iph = ncb_get(ncb, sizeof(struct iphdr));
 	if (!iph)
 		return -ENOMEM;
-		
+	
+	ncb_get(ncb, iph->ihl * 4 - sizeof(struct iphdr));
+	ncb_trim(ncb, ntohs(iph->tot_len) - iph->ihl * 4);
+
 	unc.proto = iph->protocol;
 	unc.src = iph->daddr;
 	unc.dst = iph->saddr;
@@ -91,15 +94,5 @@ int packet_ip_process(struct nc_buff *ncb)
 	unc.dport = ((__u16 *)(iph + 1))[0];
 
 	err = netchannel_queue(ncb, &unc);
-
-	if (unc.proto == IPPROTO_TCP && !err) {
-		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
-		ulog("recv: %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, flags: syn: %u, ack: %u, psh: %u, rst: %u, fin: %u.\n",
-			NIPQUAD(iph->saddr), ntohs(th->source),
-			NIPQUAD(iph->daddr), ntohs(th->dest),
-			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window),
-			th->syn, th->ack, th->psh, th->rst, th->fin);
-	}
-
 	return err;
 }

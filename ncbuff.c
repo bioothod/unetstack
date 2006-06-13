@@ -42,6 +42,7 @@ struct nc_buff *ncb_alloc(unsigned int size)
 		free(ncb);
 		return NULL;
 	}
+	memset(ncb->data, 0, ncb->total_size);
 
 	ncb->tail = ncb->head + ncb->size;
 
@@ -50,6 +51,8 @@ struct nc_buff *ncb_alloc(unsigned int size)
 
 void ncb_free(struct nc_buff *ncb)
 {
+	memset(ncb->data, 0xFF, ncb->total_size);
 	free(ncb->data);
+	memset(ncb, 0xFF, sizeof(struct nc_buff));
 	free(ncb);
 }
