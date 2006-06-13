@@ -18,7 +18,7 @@ stack: $(OBJS)
 tcp.o:		tcp.c sys.h Makefile
 udp.o:		udp.c sys.h Makefile
 ip.o:		ip.c sys.h Makefile
-netchanenl.o:	netchanenl.c sys.h Makefile
+netchannel.o:	netchannel.c sys.h Makefile
 ncbuff.o:	ncbuff.c sys.h Makefile
 route.o:	route.c sys.h Makefile
 packet.o:	packet.c sys.h Makefile
