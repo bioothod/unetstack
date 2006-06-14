@@ -174,7 +174,8 @@ int main(int argc, char *argv[])
 	__u16 sport, dport;
 	__u8 proto;
 	unsigned char buf[4096];
-	__u8 edst[] = {0x00, 0x0E, 0x0C, 0x81, 0x20, 0xFF};
+	//__u8 edst[] = {0x00, 0x0E, 0x0C, 0x81, 0x20, 0xFF};
+	__u8 edst[] = {0x00, 0x10, 0x22, 0xFD, 0xC4, 0xD6};
 	__u8 esrc[] = {0x00, 0x11, 0x09, 0x61, 0xEB, 0x0E};
 	struct nc_route rt;
 	
@@ -260,8 +261,11 @@ int main(int argc, char *argv[])
 	ulog("Connected.\n");
 	while (!need_exit) {
 		err = packet_process(packet_socket);
-		if (!err)
-			netchannel_recv(nc, buf, sizeof(buf)-1);
+		if (!err) {
+			err = netchannel_recv(nc, buf, sizeof(buf));
+			if (err > 0)
+				netchannel_send(nc, buf, err);
+		}
 	}
 
 	return 0;

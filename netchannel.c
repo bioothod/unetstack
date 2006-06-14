@@ -30,6 +30,9 @@
 #include <unistd.h>
 #include <netdb.h>
 
+#include <netinet/tcp.h>
+#include <netinet/ip.h>
+
 #include "sys.h"
 
 static struct netchannel_cache_head **netchannel_hash_table;
@@ -207,6 +210,25 @@ void netchannel_remove(struct netchannel *nc)
 	netchannel_dump_info_unc(&nc->unc, "remove", nc->hit, 0);
 	hlist_del(&nc->node);
 	free(nc);
+}
+
+int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
+{
+	struct nc_buff *ncb;
+	unsigned int header_size = sizeof(struct tcphdr) + sizeof(struct iphdr) + sizeof(struct ether_header);
+	int err;
+
+	ncb = ncb_alloc(size + header_size);
+	if (!ncb)
+		return -ENOMEM;
+
+	ncb_get(ncb, header_size);
+	memcpy(ncb->head, buf, size);
+	
+	err = nc->proto->process_out(nc->proto, nc, ncb, size);
+	if (err < 0)
+		ncb_free(ncb);
+	return err;
 }
 
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)

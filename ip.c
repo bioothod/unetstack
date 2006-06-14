@@ -65,11 +65,12 @@ int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 	if (dst->proto == IPPROTO_TCP) {
 		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
 		ulog("S %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
-			"s: %u, a: %u, p: %u, r: %u, f: %u.\n",
+			"s: %u, a: %u, p: %u, r: %u, f: %u: tlen: %u.\n",
 			NIPQUAD(iph->saddr), ntohs(th->source),
 			NIPQUAD(iph->daddr), ntohs(th->dest),
 			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window), th->doff,
-			th->syn, th->ack, th->psh, th->rst, th->fin);
+			th->syn, th->ack, th->psh, th->rst, th->fin,
+			ntohs(iph->tot_len));
 	}
 	return packet_eth_send(ncb, dst);
 }

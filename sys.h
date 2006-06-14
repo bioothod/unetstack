@@ -288,6 +288,7 @@ void netchannel_fini(void);
 struct netchannel *netchannel_create(struct unetchannel *unc);
 void netchannel_remove(struct netchannel *nc);
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size);
+int netchannel_send(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_connect(struct netchannel *nc);
 
 static inline __u16 in_csum(__u16 *addr, unsigned int len)
