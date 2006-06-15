@@ -365,7 +365,6 @@ static int tcp_fin_wait1(struct common_protocol *cproto, struct nc_buff *ncb)
 
 static int tcp_fin_wait2(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	int err;
 	struct tcphdr *th = ncb->h.th;
 	
 	if (th->fin) {
@@ -378,7 +377,6 @@ static int tcp_fin_wait2(struct common_protocol *cproto, struct nc_buff *ncb)
 
 static int tcp_close_wait(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	int err;
 	struct tcphdr *th = ncb->h.th;
 
 	if (th->fin)
@@ -450,7 +448,7 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 	int err;
 
 	proto->iss = rand();
-	proto->snd_wnd = 1024;
+	proto->snd_wnd = 4096;
 	proto->snd_nxt = proto->iss;
 	proto->rcv_wnd = 0xffff;
 
@@ -555,7 +553,7 @@ static int tcp_process_out(struct common_protocol *cproto, struct netchannel *nc
 	struct tcp_protocol *proto = tcp_convert(cproto);
 
 	if (proto->state != TCP_ESTABLISHED)
-		return 0;
+		return -1;
 	
 	return tcp_send_data(cproto, nc, ncb, 1<<TCP_FLAG_PSH);
 }
