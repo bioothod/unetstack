@@ -51,6 +51,14 @@ struct nc_buff_head {
 
 struct netchannel;
 
+struct nc_route
+{
+	__u32			src, dst;
+	__u8			edst[ETH_ALEN], esrc[ETH_ALEN];
+	__u8			proto;
+	unsigned int		header_size;
+};
+
 struct nc_buff
 {
 	struct nc_buff		*next;
@@ -71,21 +79,16 @@ struct nc_buff
 		struct iphdr	*iph;
 		void		*raw;
 	} nh;
-};
 
-struct nc_route
-{
-	__u32			src, dst;
-	__u8			edst[ETH_ALEN], esrc[ETH_ALEN];
-	__u8			proto;
+	struct nc_route		*dst;
 };
 
 extern struct nc_buff *ncb_alloc(unsigned int size);
 extern void ncb_free(struct nc_buff *);
 
-extern int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst);
-extern int packet_eth_send(struct nc_buff *ncb, struct nc_route *dst);
-extern int packet_send(struct nc_buff *ncb, struct nc_route *dst);
+extern int packet_ip_send(struct nc_buff *ncb);
+extern int packet_eth_send(struct nc_buff *ncb);
+extern int packet_send(struct nc_buff *ncb);
 
 void packet_dump(__u8 *data, unsigned int size);
 
@@ -95,8 +98,8 @@ int packet_eth_process(void *data, unsigned int size);
 static inline void *ncb_put(struct nc_buff *ncb, unsigned int size)
 {
 	if (ncb->head < ncb->data + size) {
-		ulog("%s: head: %p, data: %p, size: %u, req_size: %u.\n",
-				__func__, ncb->head, ncb->data, ncb->size, size);
+		ulog("%s: head: %p, data: %p, size: %u [%u], req_size: %u.\n",
+				__func__, ncb->head, ncb->data, ncb->size, ncb->total_size, size);
 		return NULL;
 	}
 	ncb->head -= size;
@@ -108,8 +111,8 @@ static inline void *ncb_get(struct nc_buff *ncb, unsigned int size)
 {
 	void *head = ncb->head;
 	if (ncb->tail < ncb->head + size) {
-		ulog("%s: head: %p, data: %p, size: %u, req_size: %u.\n",
-				__func__, ncb->head, ncb->data, ncb->size, size);
+		ulog("%s: head: %p, data: %p, size: %u [%u], req_size: %u.\n",
+				__func__, ncb->head, ncb->data, ncb->size, ncb->total_size, size);
 		return NULL;
 	}
 	ncb->head += size;
@@ -254,8 +257,8 @@ struct common_protocol
 	unsigned int		size;
 
 	int 			(*connect)(struct common_protocol *, struct netchannel *);
-	int 			(*process_in)(struct common_protocol *, struct netchannel *, struct nc_buff *, unsigned int size);
-	int 			(*process_out)(struct common_protocol *, struct netchannel *, struct nc_buff *, unsigned int size);
+	int 			(*process_in)(struct common_protocol *, struct nc_buff *, unsigned int size);
+	int 			(*process_out)(struct common_protocol *, struct nc_buff *, unsigned int size);
 	int 			(*destroy)(struct common_protocol *, struct netchannel *);
 };
 
@@ -328,7 +331,8 @@ static inline __u32 num2ip(const __u8 a1, const __u8 a2, const __u8 a3, const __
 	return r;
 }
 
-extern int route_get(__u32 dst, __u32 src, struct nc_route *rt);
+extern struct nc_route *route_get(__u32 dst, __u32 src);
+extern void route_put(struct nc_route *);
 extern int route_add(struct nc_route *rt);
 extern void route_fini(void);
 extern int route_init(void);

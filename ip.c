@@ -40,7 +40,7 @@
 
 #include "sys.h"
 
-int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
+int packet_ip_send(struct nc_buff *ncb)
 {
 	struct iphdr *iph;
 
@@ -48,8 +48,8 @@ int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 	if (!iph)
 		return -ENOMEM;
 
-	iph->saddr = dst->src;
-	iph->daddr = dst->dst;
+	iph->saddr = ncb->dst->src;
+	iph->daddr = ncb->dst->dst;
 	iph->check = 0;
 	iph->tos = 0;
 	iph->tot_len = htons(ncb->size);
@@ -58,11 +58,11 @@ int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 	iph->frag_off = htons(0x4000);
 	iph->version = 4;
 	iph->ihl = 5;
-	iph->protocol = dst->proto;
+	iph->protocol = ncb->dst->proto;
 
 	iph->check = in_csum((__u16 *)iph, iph->ihl*4);
 		
-	if (dst->proto == IPPROTO_TCP) {
+	if (ncb->dst->proto == IPPROTO_TCP) {
 		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
 		ulog("S %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
 			"s: %u, a: %u, p: %u, r: %u, f: %u: tlen: %u.\n",
@@ -72,7 +72,7 @@ int packet_ip_send(struct nc_buff *ncb, struct nc_route *dst)
 			th->syn, th->ack, th->psh, th->rst, th->fin,
 			ntohs(iph->tot_len));
 	}
-	return packet_eth_send(ncb, dst);
+	return packet_eth_send(ncb);
 }
 
 int packet_ip_process(struct nc_buff *ncb)

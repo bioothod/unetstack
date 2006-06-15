@@ -37,7 +37,7 @@
 
 #include "sys.h"
 
-int packet_eth_send(struct nc_buff *ncb, struct nc_route *dst)
+int packet_eth_send(struct nc_buff *ncb)
 {
 	struct ether_header *eth;
 	int err;
@@ -48,11 +48,11 @@ int packet_eth_send(struct nc_buff *ncb, struct nc_route *dst)
 		return -1;
 	}
 
-	memcpy(eth->ether_dhost, dst->edst, ETH_ALEN);
-	memcpy(eth->ether_shost, dst->esrc, ETH_ALEN);
+	memcpy(eth->ether_dhost, ncb->dst->edst, ETH_ALEN);
+	memcpy(eth->ether_shost, ncb->dst->esrc, ETH_ALEN);
 	eth->ether_type = htons(ETH_P_IP);
 
-	err = packet_send(ncb, dst);
+	err = packet_send(ncb);
 	ncb_free(ncb);
 	return err;
 }

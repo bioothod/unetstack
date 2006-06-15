@@ -30,7 +30,6 @@ static int udp_connect(struct common_protocol *proto __attribute__ ((unused)),
 }
 
 static int udp_process_in(struct common_protocol *proto __attribute__ ((unused)),
-		struct netchannel *nc __attribute__ ((unused)),
 		struct nc_buff *ncb __attribute__ ((unused)),
 		unsigned int size)
 {
@@ -38,7 +37,6 @@ static int udp_process_in(struct common_protocol *proto __attribute__ ((unused))
 }
 
 static int udp_process_out(struct common_protocol *proto __attribute__ ((unused)),
-		struct netchannel *nc __attribute__ ((unused)),	
 		struct nc_buff *ncb __attribute__ ((unused)),
 		unsigned int size)
 {

@@ -215,19 +215,39 @@ void netchannel_remove(struct netchannel *nc)
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 {
 	struct nc_buff *ncb;
-	unsigned int header_size = sizeof(struct tcphdr) + sizeof(struct iphdr) + sizeof(struct ether_header);
 	int err;
+	struct nc_route *dst;
 
-	ncb = ncb_alloc(size + header_size);
-	if (!ncb)
-		return -ENOMEM;
+	dst = route_get(nc->unc.dst, nc->unc.src);
+	if (!dst)
+		return -ENODEV;
 
-	ncb_get(ncb, header_size);
+	ncb = ncb_alloc(size + dst->header_size);
+	if (!ncb) {
+		err = -ENOMEM;
+		goto err_out_put;
+	}
+
+	ncb->dst = dst;
+	ncb->dst->proto = nc->unc.proto;
+	ncb->nc = nc;
+
+	ncb_get(ncb, dst->header_size);
+
 	memcpy(ncb->head, buf, size);
 	
-	err = nc->proto->process_out(nc->proto, nc, ncb, size);
+	err = nc->proto->process_out(nc->proto, ncb, size);
 	if (err < 0)
-		ncb_free(ncb);
+		goto err_out_free;
+
+	route_put(dst);
+	
+	return 0;
+
+err_out_free:
+	ncb_free(ncb);
+err_out_put:
+	route_put(dst);
 	return err;
 }
 
@@ -241,10 +261,11 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 		ncb = ncb_dequeue(&nc->recv_queue);
 		if (!ncb)
 			break;
+		ncb->nc = nc;
 
 		sz = min_t(unsigned int, size, ncb->size);
 
-		err = nc->proto->process_in(nc->proto, nc, ncb, sz);
+		err = nc->proto->process_in(nc->proto, ncb, sz);
 
 		if (err > 0) {
 			memcpy(buf, ncb->head, err);

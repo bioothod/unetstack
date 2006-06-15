@@ -50,7 +50,7 @@ static void term_signal(int signo)
 	need_exit = signo;
 }
 
-int packet_send(struct nc_buff *ncb, struct nc_route *dst)
+int packet_send(struct nc_buff *ncb)
 {
 	struct pollfd pfd;
 	int err;
@@ -71,7 +71,7 @@ int packet_send(struct nc_buff *ncb, struct nc_route *dst)
 	ll.sll_hatype = PACKET_OTHERHOST;
 	ll.sll_halen = ETH_ALEN;
 	ll.sll_ifindex = 2;
-	memcpy(ll.sll_addr, dst->edst, ll.sll_halen);
+	memcpy(ll.sll_addr, ncb->dst->edst, ll.sll_halen);
 
 	err = sendto(pfd.fd, ncb->head, ncb->size, 0, (struct sockaddr *)&ll, sizeof(struct sockaddr_ll));
 	if (err < 0) {
@@ -174,8 +174,11 @@ int main(int argc, char *argv[])
 	__u16 sport, dport;
 	__u8 proto;
 	unsigned char buf[4096];
-	//__u8 edst[] = {0x00, 0x0E, 0x0C, 0x81, 0x20, 0xFF};
-	__u8 edst[] = {0x00, 0x10, 0x22, 0xFD, 0xC4, 0xD6};
+	//__u8 edst[] = {0x00, 0x0E, 0x0C, 0x81, 0x20, 0xFF}; /* e1000 old*/
+	__u8 edst[] = {0x00, 0x90, 0x27, 0xAF, 0x83, 0x81}; /* dea */
+	//__u8 edst[] = {0x00, 0x10, 0x22, 0xFD, 0xC4, 0xD6}; /* 3com*/
+	//__u8 edst[] = {0x00, 0x0C, 0x6E, 0xAD, 0xBB, 0x8B}; /* kano */
+	//__u8 edst[] = {0x00, 0xE0, 0x18, 0xF5, 0x9D, 0xE6}; /* linoleum2 */
 	__u8 esrc[] = {0x00, 0x11, 0x09, 0x61, 0xEB, 0x0E};
 	struct nc_route rt;
 	
@@ -226,6 +229,8 @@ int main(int argc, char *argv[])
 	if (err)
 		return err;
 	
+	rt.header_size = sizeof(struct tcphdr) + sizeof(struct iphdr) + sizeof(struct ether_header) + 20;
+		//sizeof(struct tcp_option_mss) + 2*sizeof(struct tcp_option_nop) + sizeof(struct tcp_option_timestamp);
 	rt.src = src;
 	rt.dst = dst;
 	rt.proto = proto;
@@ -260,11 +265,19 @@ int main(int argc, char *argv[])
 		return -1;
 	ulog("Connected.\n");
 	while (!need_exit) {
+		static int sent, recv;
+
 		err = packet_process(packet_socket);
 		if (!err) {
+			//__u8 str[] = "GET http://lcamtuf.coredump.cx/p0f-help/ HTTP/1.0\n\n";
+			__u8 str[] = "GET / HTTP/1.0\n\n";
 			err = netchannel_recv(nc, buf, sizeof(buf));
-			if (err > 0)
-				netchannel_send(nc, buf, err);
+			if (err >= 0)
+				recv++;
+#if 1
+			if ((recv == 1) &&!sent && (netchannel_send(nc, str, sizeof(str)) >= 0))
+				sent = 1;
+#endif
 		}
 	}
 

@@ -37,25 +37,29 @@
 static unsigned int route_num = 0;
 static struct nc_route *route_table;
 
-int route_get(__u32 dst, __u32 src, struct nc_route *rt)
+struct nc_route *route_get(__u32 dst, __u32 src)
 {
 	unsigned int i;
-	int err = -ENODEV;
+	struct nc_route *rt = NULL;
 
 	for (i=0; i<route_num; ++i) {
 		if (dst == route_table[i].dst) {
-			err = 0;
-			rt->src = route_table[i].src;
-			rt->dst = route_table[i].dst;
-			memcpy(rt->edst, route_table[i].edst, ETH_ALEN);
-			memcpy(rt->esrc, route_table[i].esrc, ETH_ALEN);
+			rt = &route_table[i];
 
 			if (src == route_table[i].src)
 				break;
 		}
 	}
+#if 0
+	if (rt)
+		ulog("%u.%u.%u.%u -> %u.%u.%u.%u, proto: %u, header_size: %u.\n",
+			NIPQUAD(rt->src), NIPQUAD(rt->dst), rt->proto, rt->header_size);
+#endif
+	return rt;
+}
 
-	return err;
+void route_put(struct nc_route *rt)
+{
 }
 
 int route_init(void)
@@ -82,11 +86,8 @@ int route_add(struct nc_route *rt)
 	route_table = realloc(route_table, sizeof(struct nc_route) * route_num);
 	if (!route_table)
 		return -ENOMEM;
-			
-	route_table[route_num - 1].src = rt->src;
-	route_table[route_num - 1].dst = rt->dst;
-	memcpy(route_table[route_num - 1].esrc, rt->esrc, ETH_ALEN);
-	memcpy(route_table[route_num - 1].edst, rt->edst, ETH_ALEN);
+
+	memcpy(&route_table[route_num - 1], rt, sizeof(struct nc_route));
 
 	return 0;
 }

@@ -76,6 +76,8 @@ struct tcp_protocol
 	__u16			rcv_wnd;
 	__u16			rcv_wup;
 	__u32			irs;
+
+	__u32			tsval, tsecr;
 };
 
 struct state_machine
@@ -83,6 +85,24 @@ struct state_machine
 	__u32		state;
 	int		(*run)(struct common_protocol *, struct nc_buff *);
 };
+
+struct tcp_option_timestamp
+{
+	__u8		kind, length;
+	__u32		tsval, tsecr;
+} __attribute__ ((packed));
+
+struct tcp_option_nop
+{
+	__u8		kind;
+} __attribute__ ((packed));
+
+struct tcp_option_mss
+{
+	__u8		kind, length;
+	__u16		mss;
+} __attribute__ ((packed));
+
 
 static inline struct tcp_protocol *tcp_convert(struct common_protocol *cproto)
 {
@@ -103,19 +123,30 @@ static inline void tcp_set_state(struct tcp_protocol *proto, __u32 state)
 	proto->state = state;
 }
 
-static int tcp_send_data(struct common_protocol *cproto, struct netchannel *nc, struct nc_buff *ncb, __u32 flags)
+static int tcp_send_data(struct common_protocol *cproto, struct nc_buff *ncb, __u32 flags, __u8 doff)
 {
 	struct tcp_protocol *proto = tcp_convert(cproto);
-	int err = -ENOMEM;
 	struct tcphdr *th;
-	struct nc_route dst;
 	struct pseudohdr *p;
 	unsigned int data_size = ncb->size;
+	struct tcp_option_nop *nop;
+	struct tcp_option_timestamp *ts;
+
+	nop = ncb_put(ncb, sizeof(struct tcp_option_nop));
+	nop->kind = 1;
+	nop = ncb_put(ncb, sizeof(struct tcp_option_nop));
+	nop->kind = 1;
+
+	ts = ncb_put(ncb, sizeof(struct tcp_option_timestamp));
+	ts->kind = 8;
+	ts->length = 10;
+	ts->tsval = htonl(proto->tsval);
+	ts->tsecr = htonl(proto->tsecr);
 
 	th = ncb_put(ncb, sizeof(struct tcphdr));
 
-	th->source = nc->unc.sport;
-	th->dest = nc->unc.dport;
+	th->source = ncb->nc->unc.sport;
+	th->dest = ncb->nc->unc.dport;
 	th->seq = htonl(proto->snd_nxt);
 	th->ack_seq = htonl(proto->rcv_nxt);
 
@@ -130,52 +161,58 @@ static int tcp_send_data(struct common_protocol *cproto, struct netchannel *nc, 
 	if (flags & (1 << TCP_FLAG_FIN))
 		th->fin = 1;
 	th->window = htons(proto->snd_wnd);
-	th->doff = 5;
+	th->doff = 5 + 3 + doff;
 
 	p = (struct pseudohdr *)(((__u8 *)th) - sizeof(struct pseudohdr));
 	memset(p, 0, sizeof(*p));
-	
-	p->saddr = nc->unc.src;
-	p->daddr = nc->unc.dst;
+
+	p->saddr = ncb->nc->unc.src;
+	p->daddr = ncb->nc->unc.dst;
 	p->proto = IPPROTO_TCP;
 	p->len = htonl(ncb->size);
-	
+
 	th->check = in_csum((__u16 *)p, sizeof(struct pseudohdr) + ncb->size);
 
-	err = route_get(nc->unc.dst, nc->unc.src, &dst);
-	if (err)
-		goto err_out;
-
-	dst.proto = nc->unc.proto;
-	
 	proto->snd_una = proto->snd_nxt;
-	proto->snd_nxt += th->syn + th->fin + data_size;
+	proto->snd_nxt += th->syn + th->fin + data_size - doff*4;
 
-	err = packet_ip_send(ncb, &dst);
-
-err_out:
-	return err;
+	return packet_ip_send(ncb);
 }
 
 static int tcp_send_bit(struct common_protocol *cproto, struct netchannel *nc, __u32 flags)
 {
 	struct nc_buff *ncb;
-	unsigned int header_size = sizeof(struct tcphdr) + sizeof(struct iphdr) + sizeof(struct ether_header);
 	int err;
+	struct nc_route *dst;
 
-	ncb = ncb_alloc(header_size);
-	if (!ncb)
-		return -ENOMEM;
+	dst = route_get(nc->unc.dst, nc->unc.src);
+	if (!dst)
+		return -ENODEV;
 
-	ncb_get(ncb, header_size);
-
-	err = tcp_send_data(cproto, nc, ncb, flags);
-	if (err < 0) {
-		ncb_free(ncb);
-		return err;
+	ncb = ncb_alloc(dst->header_size);
+	if (!ncb) {
+		err = -ENOMEM;
+		goto err_out_put;
 	}
 
+	ncb->dst = dst;
+	ncb->dst->proto = nc->unc.proto;
+	ncb->nc = nc;
+
+	ncb_get(ncb, dst->header_size);
+
+	err = tcp_send_data(cproto, ncb, flags, 0);
+	if (err < 0)
+		goto err_out_free;
+	route_put(dst);
+
 	return 0;
+
+err_out_free:
+	ncb_free(ncb);
+err_out_put:
+	route_put(dst);
+	return err;
 }
 
 static int tcp_listen(struct common_protocol *cproto, struct nc_buff *ncb)
@@ -213,7 +250,7 @@ static int tcp_syn_sent(struct common_protocol *cproto, struct nc_buff *ncb)
 	struct tcphdr *th = ncb->h.th;
 	__u32 seq = htonl(th->seq);
 	__u32 ack = htonl(th->ack_seq);
-#if 0
+#if 1
 	ulog("%s: a: %d, s: %d, ack: %u, seq: %u, iss: %u, snd_nxt: %u, snd_una: %u.\n",
 			__func__, th->ack, th->syn, ack, seq, proto->iss, proto->snd_nxt, proto->snd_una);
 #endif
@@ -446,18 +483,52 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 {
 	struct tcp_protocol *proto = tcp_convert(cproto);
 	int err;
+	struct nc_buff *ncb;
+	struct tcp_option_mss *mss;
+	struct nc_route *dst;
 
 	proto->iss = rand();
 	proto->snd_wnd = 4096;
 	proto->snd_nxt = proto->iss;
 	proto->rcv_wnd = 0xffff;
+	proto->tsval = time(NULL);
+	proto->tsecr = 0;
 
-	err = tcp_send_bit(cproto, nc, (1<<TCP_FLAG_SYN));
+	dst = route_get(nc->unc.dst, nc->unc.src);
+	if (!dst)
+		return -ENODEV;
+
+	ncb = ncb_alloc(dst->header_size);
+	if (!ncb) {
+		err = -ENOMEM;
+		goto err_out_put;
+	}
+
+	ncb->dst = dst;
+	ncb->dst->proto = nc->unc.proto;
+	ncb->nc = nc;
+
+	ncb_get(ncb, dst->header_size);
+
+	mss = ncb_put(ncb, sizeof(struct tcp_option_mss));
+
+	mss->kind = 2;
+	mss->length = 4;
+	mss->mss = htons(1460);
+
+	err = tcp_send_data(cproto, ncb, 1<<TCP_FLAG_SYN, ncb->size/4);
 	if (err < 0)
-		return err;
+		goto err_out_free;
 
+	route_put(dst);
 	tcp_set_state(proto, TCP_SYN_SENT);
 	return 0;
+
+err_out_free:
+	ncb_free(ncb);
+err_out_put:
+	route_put(dst);
+	return err;
 }
 
 static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff *ncb)
@@ -536,26 +607,25 @@ out:
 	return err;
 }
 
-static int tcp_process_in(struct common_protocol *cproto, struct netchannel *nc, struct nc_buff *ncb, unsigned int size)
+static int tcp_process_in(struct common_protocol *cproto, struct nc_buff *ncb, unsigned int size)
 {
 	struct tcphdr *th = ncb->h.raw = ncb_get(ncb, sizeof(struct tcphdr));
 	if (!ncb->h.raw)
 		return -EINVAL;
 	
-	ncb->nc = nc;
 	ncb_get(ncb, th->doff * 4 - sizeof(struct tcphdr));
 
 	return tcp_state_machine_run(cproto, ncb);
 }
 
-static int tcp_process_out(struct common_protocol *cproto, struct netchannel *nc, struct nc_buff *ncb, unsigned int size)
+static int tcp_process_out(struct common_protocol *cproto, struct nc_buff *ncb, unsigned int size)
 {
 	struct tcp_protocol *proto = tcp_convert(cproto);
 
 	if (proto->state != TCP_ESTABLISHED)
 		return -1;
 	
-	return tcp_send_data(cproto, nc, ncb, 1<<TCP_FLAG_PSH);
+	return tcp_send_data(cproto, ncb, (1<<TCP_FLAG_PSH)|(1<<TCP_FLAG_ACK), 0);
 }
 
 static int tcp_destroy(struct common_protocol *cproto, struct netchannel *nc)
