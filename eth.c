@@ -54,7 +54,7 @@ int packet_eth_send(struct nc_buff *ncb)
 	if (err)
 		return err;
 
-	ncb_free(ncb);
+	ncb_put(ncb);
 	return 0;
 }
 
@@ -87,6 +87,6 @@ int packet_eth_process(void *data, unsigned int size)
 	return 0;
 
 err_out_free:
-	ncb_free(ncb);
+	ncb_put(ncb);
 	return err;
 }

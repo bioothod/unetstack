@@ -67,6 +67,8 @@ struct nc_buff
 	void			*data, *head, *tail;
 	unsigned int		size, total_size;
 
+	int			refcnt;
+
 	struct netchannel	*nc;
 
 	union {
@@ -132,6 +134,20 @@ static inline void *ncb_trim(struct nc_buff *ncb, unsigned int size)
 	return ncb->head;
 }
 
+static inline struct nc_buff *ncb_get(struct nc_buff *ncb)
+{
+	ncb->refcnt++;
+	return ncb;
+}
+
+static inline void ncb_put(struct nc_buff *ncb)
+{
+	if (ncb->refcnt <= 0)
+		ulog("%s: BUG: refcnt: %d.\n", __func__, ncb->refcnt);
+	else if (--ncb->refcnt == 0)
+		ncb_free(ncb);
+}
+
 static inline void ncb_queue_init(struct nc_buff_head *list)
 {
 	list->prev = list->next = (struct nc_buff *)list;
@@ -179,7 +195,7 @@ static inline void netchannel_flush_list_head(struct nc_buff_head *list)
 	struct nc_buff *ncb;
 	
 	while ((ncb = ncb_dequeue(list)))
-		ncb_free(ncb);
+		ncb_put(ncb);
 }
 
 struct hlist_node;

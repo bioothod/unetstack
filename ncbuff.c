@@ -44,6 +44,7 @@ struct nc_buff *ncb_alloc(unsigned int size)
 	}
 	memset(ncb->data, 0, ncb->total_size);
 
+	ncb->refcnt = 1;
 	ncb->tail = ncb->head + ncb->size;
 
 	return ncb;

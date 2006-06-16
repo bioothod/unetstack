@@ -179,6 +179,7 @@ int main(int argc, char *argv[])
 	//__u8 edst[] = {0x00, 0x10, 0x22, 0xFD, 0xC4, 0xD6}; /* 3com*/
 	//__u8 edst[] = {0x00, 0x0C, 0x6E, 0xAD, 0xBB, 0x8B}; /* kano */
 	//__u8 edst[] = {0x00, 0xE0, 0x18, 0xF5, 0x9D, 0xE6}; /* linoleum2 */
+	//__u8 edst[] = {0x00, 0x0E, 0x0C, 0x83, 0x87, 0xF0}; /* e1000 new */
 	__u8 esrc[] = {0x00, 0x11, 0x09, 0x61, 0xEB, 0x0E};
 	struct nc_route rt;
 	
@@ -186,10 +187,12 @@ int main(int argc, char *argv[])
 	rt.dst = num2ip(192,168,0,48);
 	memcpy(rt.edst, edst, ETH_ALEN);
 	memcpy(rt.esrc, esrc, ETH_ALEN);
+	
+	srand(time(NULL));
 
 	saddr = "192.168.0.48";
 	daddr = "192.168.4.78";
-	sport = 1111;
+	sport = rand();
 	dport = 1025;
 	proto = IPPROTO_TCP;
 
@@ -230,14 +233,11 @@ int main(int argc, char *argv[])
 		return err;
 	
 	rt.header_size = sizeof(struct tcphdr) + sizeof(struct iphdr) + sizeof(struct ether_header) + 20;
-		//sizeof(struct tcp_option_mss) + 2*sizeof(struct tcp_option_nop) + sizeof(struct tcp_option_timestamp);
 	rt.src = src;
 	rt.dst = dst;
 	rt.proto = proto;
 	memcpy(rt.edst, edst, ETH_ALEN);
 	memcpy(rt.esrc, esrc, ETH_ALEN);
-	
-	srand(time(NULL));
 
 	err = route_add(&rt);
 	if (err)
@@ -271,6 +271,7 @@ int main(int argc, char *argv[])
 		if (!err) {
 			//__u8 str[] = "GET http://lcamtuf.coredump.cx/p0f-help/ HTTP/1.0\n\n";
 			__u8 str[] = "GET / HTTP/1.0\n\n";
+			//__u8 str[] = "GET http://www.opensolaris.org/os/ HTTP/1.0\n\n";
 			err = netchannel_recv(nc, buf, sizeof(buf));
 			if (err >= 0)
 				recv++;

@@ -212,7 +212,7 @@ static int tcp_send_bit(struct common_protocol *cproto, struct netchannel *nc, _
 	return 0;
 
 err_out_free:
-	ncb_free(ncb);
+	ncb_put(ncb);
 err_out_put:
 	route_put(dst);
 	return err;
@@ -338,12 +338,12 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 
 	if (th->rst)
 		goto out;
-		
-	ulog("%s: seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
+
+	ulog("%s: seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u.\n",
 			__func__, seq, ack, 
-			proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->snd_wl1, proto->snd_wl2);
-		
-	if (proto->snd_una < ack && ack <= proto->snd_nxt)
+			proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->rcv_nxt, proto->rcv_wnd);
+
+	if (proto->snd_una <= ack && ack <= proto->snd_nxt)
 		proto->snd_una = ack;
 	else if (ack < proto->snd_una) {
 		ulog("%s: duplicate 3 ack: %u [%u], snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
@@ -353,6 +353,21 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 		err = tcp_send_bit(cproto, ncb->nc, 1<<TCP_FLAG_ACK);
 		if (err < 0)
 			goto out;
+	}
+
+	/*
+	 * Out of order packet.
+	 */
+	if (seq > proto->rcv_nxt) {
+		ulog("out-of-order: seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u, size: %u.\n",
+				seq, ack, 
+				proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->rcv_nxt, proto->rcv_wnd, ncb->size);
+		err = 0;
+		goto out;
+	} else {
+		ulog("in-order: seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u, size: %u.\n",
+			seq, ack, 
+			proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->rcv_nxt, proto->rcv_wnd, ncb->size);
 	}
 
 	if ((proto->snd_wl1 < seq) || (proto->snd_wl1 == seq && proto->snd_wl2 <= ack)) {
@@ -526,7 +541,7 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 	return 0;
 
 err_out_free:
-	ncb_free(ncb);
+	ncb_put(ncb);
 err_out_put:
 	route_put(dst);
 	return err;
@@ -564,18 +579,21 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 				broken = 0;
 
 		if (broken && !th->rst) {
-			ulog("R broken: %u.\n", broken);
+			ulog("R broken: rwin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
+					rwin, seq, proto->rcv_nxt, ncb->size);
 			return tcp_send_bit(cproto, ncb->nc, 1<<TCP_FLAG_ACK);
 		}
 
 		if (th->rst) {
-			ulog("R rst, broken: %u.\n", broken);
+			ulog("R broken rst: rwin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
+					rwin, seq, proto->rcv_nxt, ncb->size);
 			tcp_set_state(proto, TCP_CLOSE);
 			return 0;
 		}
 
 		if (th->syn) {
-			ulog("R syn, broken: %u.\n", broken);
+			ulog("R broken syn: rwin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
+					rwin, seq, proto->rcv_nxt, ncb->size);
 			goto out;
 		}
 
@@ -584,7 +602,7 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 
 		err = tcp_state_machine[proto->state].run(cproto, ncb);
 
-		if (th->fin) {
+		if (th->fin && seq == proto->rcv_nxt) {
 			if (proto->state == TCP_LISTEN || proto->state == TCP_CLOSE)
 				return 0;
 			proto->rcv_nxt++;
@@ -593,10 +611,12 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 	}
 
 out:
+#if 0
 	ulog("E %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, state: %u, err: %d.\n",
 		NIPQUAD(ncb->nc->unc.src), ntohs(ncb->nc->unc.sport),
 		NIPQUAD(ncb->nc->unc.dst), ntohs(ncb->nc->unc.dport),
 		ntohl(th->seq), ntohl(th->ack_seq), proto->state, err);
+#endif
 	if (err < 0) {
 		__u32 flags = 1<<TCP_FLAG_RST;
 		if (th->ack) {
