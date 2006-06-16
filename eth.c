@@ -43,18 +43,19 @@ int packet_eth_send(struct nc_buff *ncb)
 	int err;
 
 	eth = ncb_put(ncb, sizeof(struct ether_header));
-	if (!eth) {
-		ncb_free(ncb);
-		return -1;
-	}
+	if (!eth)
+		return -ENOMEM;
 
 	memcpy(eth->ether_dhost, ncb->dst->edst, ETH_ALEN);
 	memcpy(eth->ether_shost, ncb->dst->esrc, ETH_ALEN);
 	eth->ether_type = htons(ETH_P_IP);
 
 	err = packet_send(ncb);
+	if (err)
+		return err;
+
 	ncb_free(ncb);
-	return err;
+	return 0;
 }
 
 int packet_eth_process(void *data, unsigned int size)
