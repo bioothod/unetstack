@@ -80,6 +80,7 @@ struct tcp_protocol
 	__u32			tsval, tsecr;
 
 	struct nc_buff_head	retransmit_queue;
+	__u32			first_retransmit_tsval;
 };
 
 struct state_machine
@@ -342,10 +343,10 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 			__func__, seq, ack, 
 			proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->snd_wl1, proto->snd_wl2);
 		
-	if (proto->snd_una <= ack && ack <= proto->snd_nxt)
+	if (proto->snd_una < ack && ack <= proto->snd_nxt)
 		proto->snd_una = ack;
 	else if (ack < proto->snd_una) {
-		ulog("%s: 3 ack: %u [%u], snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
+		ulog("%s: duplicate 3 ack: %u [%u], snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
 				__func__, ack, th->ack, proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->snd_wl1, proto->snd_wl2);
 		return 0;
 	} else if (ack > proto->snd_nxt) {
@@ -362,17 +363,14 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 
 	proto->rcv_nxt += ncb->size;
 
-	if (th->psh) {
-		int err;
-		err = tcp_send_bit(cproto, ncb->nc, 1<<TCP_FLAG_ACK);
-		if (err < 0)
-			goto out;
-	}
-	
 	if (th->fin) {
 		tcp_set_state(proto, TCP_CLOSE_WAIT);
-		return 0;
+		err = 0;
 	}
+
+	err = tcp_send_bit(cproto, ncb->nc, 1<<TCP_FLAG_ACK);
+	if (err < 0)
+		goto out;
 
 	return ncb->size;
 
@@ -565,16 +563,21 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 					(seq >= proto->rcv_nxt && seq+ncb->size-1 < proto->rcv_nxt + rwin))
 				broken = 0;
 
-		if (broken && !th->rst)
+		if (broken && !th->rst) {
+			ulog("R broken: %u.\n", broken);
 			return tcp_send_bit(cproto, ncb->nc, 1<<TCP_FLAG_ACK);
+		}
 
 		if (th->rst) {
+			ulog("R rst, broken: %u.\n", broken);
 			tcp_set_state(proto, TCP_CLOSE);
 			return 0;
 		}
 
-		if (th->syn)
+		if (th->syn) {
+			ulog("R syn, broken: %u.\n", broken);
 			goto out;
+		}
 
 		if (!th->ack)
 			return 0;
@@ -596,9 +599,10 @@ out:
 		ntohl(th->seq), ntohl(th->ack_seq), proto->state, err);
 	if (err < 0) {
 		__u32 flags = 1<<TCP_FLAG_RST;
-		if (th->ack)
+		if (th->ack) {
 			proto->snd_nxt = ntohl(th->ack_seq);
-		else {
+			//proto->rcv_nxt = ntohl(th->seq);
+		} else {
 			flags |= 1 << TCP_FLAG_ACK;
 			proto->snd_nxt = 0;
 			proto->rcv_nxt = ntohl(th->seq) + ncb->size;
