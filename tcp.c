@@ -78,6 +78,8 @@ struct tcp_protocol
 	__u32			irs;
 
 	__u32			tsval, tsecr;
+
+	struct nc_buff_head	retransmit_queue;
 };
 
 struct state_machine
@@ -132,18 +134,18 @@ static int tcp_send_data(struct common_protocol *cproto, struct nc_buff *ncb, __
 	struct tcp_option_nop *nop;
 	struct tcp_option_timestamp *ts;
 
-	nop = ncb_put(ncb, sizeof(struct tcp_option_nop));
+	nop = ncb_push(ncb, sizeof(struct tcp_option_nop));
 	nop->kind = 1;
-	nop = ncb_put(ncb, sizeof(struct tcp_option_nop));
+	nop = ncb_push(ncb, sizeof(struct tcp_option_nop));
 	nop->kind = 1;
 
-	ts = ncb_put(ncb, sizeof(struct tcp_option_timestamp));
+	ts = ncb_push(ncb, sizeof(struct tcp_option_timestamp));
 	ts->kind = 8;
 	ts->length = 10;
 	ts->tsval = htonl(proto->tsval);
 	ts->tsecr = htonl(proto->tsecr);
 
-	th = ncb_put(ncb, sizeof(struct tcphdr));
+	th = ncb_push(ncb, sizeof(struct tcphdr));
 
 	th->source = ncb->nc->unc.sport;
 	th->dest = ncb->nc->unc.dport;
@@ -199,7 +201,7 @@ static int tcp_send_bit(struct common_protocol *cproto, struct netchannel *nc, _
 	ncb->dst->proto = nc->unc.proto;
 	ncb->nc = nc;
 
-	ncb_get(ncb, dst->header_size);
+	ncb_pull(ncb, dst->header_size);
 
 	err = tcp_send_data(cproto, ncb, flags, 0);
 	if (err < 0)
@@ -493,6 +495,7 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 	proto->rcv_wnd = 0xffff;
 	proto->tsval = time(NULL);
 	proto->tsecr = 0;
+	ncb_queue_init(&proto->retransmit_queue);
 
 	dst = route_get(nc->unc.dst, nc->unc.src);
 	if (!dst)
@@ -508,9 +511,9 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 	ncb->dst->proto = nc->unc.proto;
 	ncb->nc = nc;
 
-	ncb_get(ncb, dst->header_size);
+	ncb_pull(ncb, dst->header_size);
 
-	mss = ncb_put(ncb, sizeof(struct tcp_option_mss));
+	mss = ncb_push(ncb, sizeof(struct tcp_option_mss));
 
 	mss->kind = 2;
 	mss->length = 4;
@@ -609,11 +612,11 @@ out:
 
 static int tcp_process_in(struct common_protocol *cproto, struct nc_buff *ncb, unsigned int size)
 {
-	struct tcphdr *th = ncb->h.raw = ncb_get(ncb, sizeof(struct tcphdr));
+	struct tcphdr *th = ncb->h.raw = ncb_pull(ncb, sizeof(struct tcphdr));
 	if (!ncb->h.raw)
 		return -EINVAL;
 	
-	ncb_get(ncb, th->doff * 4 - sizeof(struct tcphdr));
+	ncb_pull(ncb, th->doff * 4 - sizeof(struct tcphdr));
 
 	return tcp_state_machine_run(cproto, ncb);
 }
@@ -625,6 +628,8 @@ static int tcp_process_out(struct common_protocol *cproto, struct nc_buff *ncb, 
 	if (proto->state != TCP_ESTABLISHED)
 		return -1;
 	
+	//ncb_queue_tail(&proto->retransmit_queue, ncb);
+
 	return tcp_send_data(cproto, ncb, (1<<TCP_FLAG_PSH)|(1<<TCP_FLAG_ACK), 0);
 }
 

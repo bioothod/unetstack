@@ -195,7 +195,7 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 	nc->proto = (struct common_protocol *)(nc + 1);
 	memcpy(nc->proto, proto, sizeof(struct common_protocol));
 
-	nc_buff_head_init(&nc->recv_queue);
+	ncb_queue_init(&nc->recv_queue);
 	memcpy(&nc->unc, unc, sizeof(struct unetchannel));
 
 	hlist_add_head(&nc->node, &bucket->head);
@@ -232,7 +232,7 @@ int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 	ncb->dst->proto = nc->unc.proto;
 	ncb->nc = nc;
 
-	ncb_get(ncb, dst->header_size);
+	ncb_pull(ncb, dst->header_size);
 
 	memcpy(ncb->head, buf, size);
 

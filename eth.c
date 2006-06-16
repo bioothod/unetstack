@@ -42,7 +42,7 @@ int packet_eth_send(struct nc_buff *ncb)
 	struct ether_header *eth;
 	int err;
 
-	eth = ncb_put(ncb, sizeof(struct ether_header));
+	eth = ncb_push(ncb, sizeof(struct ether_header));
 	if (!eth)
 		return -ENOMEM;
 
@@ -70,7 +70,7 @@ int packet_eth_process(void *data, unsigned int size)
 
 	memcpy(ncb->head, data, size);
 
-	eth = ncb_get(ncb, sizeof(struct ether_header));
+	eth = ncb_pull(ncb, sizeof(struct ether_header));
 	if (!eth)
 		goto err_out_free;
 

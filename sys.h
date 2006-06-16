@@ -95,7 +95,7 @@ void packet_dump(__u8 *data, unsigned int size);
 int packet_ip_process(struct nc_buff *ncb);
 int packet_eth_process(void *data, unsigned int size);
 
-static inline void *ncb_put(struct nc_buff *ncb, unsigned int size)
+static inline void *ncb_push(struct nc_buff *ncb, unsigned int size)
 {
 	if (ncb->head < ncb->data + size) {
 		ulog("%s: head: %p, data: %p, size: %u [%u], req_size: %u.\n",
@@ -107,7 +107,7 @@ static inline void *ncb_put(struct nc_buff *ncb, unsigned int size)
 	return ncb->head;
 }
 
-static inline void *ncb_get(struct nc_buff *ncb, unsigned int size)
+static inline void *ncb_pull(struct nc_buff *ncb, unsigned int size)
 {
 	void *head = ncb->head;
 	if (ncb->tail < ncb->head + size) {
@@ -132,7 +132,7 @@ static inline void *ncb_trim(struct nc_buff *ncb, unsigned int size)
 	return ncb->head;
 }
 
-static inline void nc_buff_head_init(struct nc_buff_head *list)
+static inline void ncb_queue_init(struct nc_buff_head *list)
 {
 	list->prev = list->next = (struct nc_buff *)list;
 	list->qlen = 0;

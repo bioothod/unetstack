@@ -44,7 +44,7 @@ int packet_ip_send(struct nc_buff *ncb)
 {
 	struct iphdr *iph;
 
-	iph = ncb_put(ncb, sizeof(struct iphdr));
+	iph = ncb_push(ncb, sizeof(struct iphdr));
 	if (!iph)
 		return -ENOMEM;
 
@@ -81,11 +81,11 @@ int packet_ip_process(struct nc_buff *ncb)
 	struct unetchannel unc;
 	int err;
 
-	ncb->nh.iph = iph = ncb_get(ncb, sizeof(struct iphdr));
+	ncb->nh.iph = iph = ncb_pull(ncb, sizeof(struct iphdr));
 	if (!iph)
 		return -ENOMEM;
 	
-	ncb_get(ncb, iph->ihl * 4 - sizeof(struct iphdr));
+	ncb_pull(ncb, iph->ihl * 4 - sizeof(struct iphdr));
 	ncb_trim(ncb, ntohs(iph->tot_len) - iph->ihl * 4);
 
 	unc.proto = iph->protocol;
