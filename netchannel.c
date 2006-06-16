@@ -79,7 +79,7 @@ static struct netchannel *netchannel_check_full(struct unetchannel *unc, struct 
 	struct netchannel *nc;
 	struct hlist_node *node;
 	int found = 0;
-	
+
 	hlist_for_each_entry(nc, node, &bucket->head, node) {
 		if (netchannel_hash_equal_full(&nc->unc, unc)) {
 			found = 1;
@@ -156,7 +156,7 @@ static inline void netchannel_dump_info_unc(struct unetchannel *unc, char *prefi
 {
 	__u32 src, dst;
 	__u16 sport, dport;
-	
+
 	dst = unc->dst;
 	src = unc->src;
 	dport = ntohs(unc->dport);
@@ -235,13 +235,13 @@ int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 	ncb_get(ncb, dst->header_size);
 
 	memcpy(ncb->head, buf, size);
-	
+
 	err = nc->proto->process_out(nc->proto, ncb, size);
 	if (err < 0)
 		goto err_out_free;
 
 	route_put(dst);
-	
+
 	return 0;
 
 err_out_free:
@@ -256,7 +256,7 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 	struct nc_buff *ncb;
 	int err = 0;
 	unsigned int sz, read = 0;
-	
+
 	while (size) {
 		ncb = ncb_dequeue(&nc->recv_queue);
 		if (!ncb)
