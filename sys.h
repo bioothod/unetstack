@@ -160,16 +160,16 @@ static inline int ncb_queue_empty(const struct nc_buff_head *list)
 }
 
 
-static inline void ncb_queue_tail(struct nc_buff_head *list, struct nc_buff *newnc)
+static inline void ncb_queue_tail(struct nc_buff_head *list, struct nc_buff *ncb)
 {
 	struct nc_buff *prev, *next;
 
 	list->qlen++;
 	next = (struct nc_buff *)list;
 	prev = next->prev;
-	newnc->next = next;
-	newnc->prev = prev;
-	next->prev  = prev->next = newnc;
+	ncb->next = next;
+	ncb->prev = prev;
+	next->prev  = prev->next = ncb;
 }
 
 static inline struct nc_buff *ncb_dequeue(struct nc_buff_head *list)
@@ -206,6 +206,16 @@ static inline struct nc_buff *ncb_peek(struct nc_buff_head *list_)
 	if (list == (struct nc_buff *)list_)
 		list = NULL;
 	return list;
+}
+
+static inline void ncb_unlink(struct nc_buff *ncb, struct nc_buff_head *head)
+{
+	struct nc_buff *prev = ncb->prev;
+	struct nc_buff *next = ncb->next;
+
+	prev->next = next;
+	next->prev = prev;
+	head->qlen--;
 }
 
 static inline void netchannel_flush_list_head(struct nc_buff_head *list)
@@ -291,9 +301,10 @@ struct common_protocol
 	unsigned int		size;
 
 	int 			(*connect)(struct common_protocol *, struct netchannel *);
-	int 			(*process_in)(struct common_protocol *, struct nc_buff *, unsigned int size);
-	int 			(*process_out)(struct common_protocol *, struct nc_buff *, unsigned int size);
+	int 			(*process_in)(struct common_protocol *, struct nc_buff *);
+	int 			(*process_out)(struct common_protocol *, struct nc_buff *);
 	int 			(*destroy)(struct common_protocol *, struct netchannel *);
+	int 			(*read_data)(struct common_protocol *, __u8 *, unsigned int);
 };
 
 struct unetchannel 

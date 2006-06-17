@@ -236,7 +236,7 @@ int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 
 	memcpy(ncb->head, buf, size);
 
-	err = nc->proto->process_out(nc->proto, ncb, size);
+	err = nc->proto->process_out(nc->proto, ncb);
 	if (err < 0)
 		goto err_out_free;
 
@@ -255,28 +255,31 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 {
 	struct nc_buff *ncb;
 	int err = 0;
-	unsigned int sz, read = 0;
+	unsigned int read = 0;
 
 	while (size) {
 		ncb = ncb_dequeue(&nc->recv_queue);
 		if (!ncb)
 			break;
 		ncb->nc = nc;
+		err = nc->proto->process_in(nc->proto, ncb);
 
-		sz = min_t(unsigned int, size, ncb->size);
+		ulog("process_in: err: %d.\n", err);
+		
+		if (err <= 0) {
+			ncb_put(ncb);
+			break;
+		}
 
-		err = nc->proto->process_in(nc->proto, ncb, sz);
+		err = nc->proto->read_data(nc->proto, buf, size);
 
 		if (err > 0) {
-			memcpy(buf, ncb->head, err);
 			write(1, buf, err);
 			size -= err;
 			buf += err;
 			read += err;
-		} else {
-			ncb_put(ncb);
-			break;
 		}
+		
 		ncb_put(ncb);
 	}
 

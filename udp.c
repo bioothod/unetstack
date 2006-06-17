@@ -30,17 +30,21 @@ static int udp_connect(struct common_protocol *proto __attribute__ ((unused)),
 }
 
 static int udp_process_in(struct common_protocol *proto __attribute__ ((unused)),
-		struct nc_buff *ncb __attribute__ ((unused)),
-		unsigned int size)
+		struct nc_buff *ncb)
 {
-	return size;
+	return ncb->size;
 }
 
 static int udp_process_out(struct common_protocol *proto __attribute__ ((unused)),
-		struct nc_buff *ncb __attribute__ ((unused)),
-		unsigned int size)
+		struct nc_buff *ncb)
 {
-	return size;
+	return ncb->size;
+}
+
+static int udp_read_data(struct common_protocol *proto __attribute__ ((unused)),
+		__u8 *buf __attribute__ ((unused)), unsigned int size __attribute__ ((unused)))
+{
+	return 0;
 }
 
 static int udp_destroy(struct common_protocol *proto __attribute__ ((unused)),
@@ -59,5 +63,6 @@ struct common_protocol udp_protocol = {
 	.connect	= &udp_connect,
 	.process_in	= &udp_process_in,
 	.process_out	= &udp_process_out,
+	.read_data	= &udp_read_data,
 	.destroy	= &udp_destroy,
 };
