@@ -40,7 +40,7 @@ struct pseudohdr
 {
 	__u32		saddr, daddr;
 	__u8		empty;
-	__u8		proto;
+	__u8		tp;
 	__u32		len;
 } __attribute__ ((packed));
 
@@ -149,15 +149,15 @@ static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
 	return seq3 - seq2 >= seq1 - seq2;
 }
 
-static inline void tcp_set_state(struct tcp_protocol *proto, __u32 state)
+static inline void tcp_set_state(struct tcp_protocol *tp, __u32 state)
 {
-	ulog("state change: %u -> %u.\n", proto->state, state);
-	proto->state = state;
+	ulog("state change: %u -> %u.\n", tp->state, state);
+	tp->state = state;
 }
 
 static int tcp_send_data(struct common_protocol *cproto, struct nc_buff *ncb, __u32 flags, __u8 doff)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th;
 	struct pseudohdr *p;
 	unsigned int data_size = ncb->size;
@@ -172,15 +172,15 @@ static int tcp_send_data(struct common_protocol *cproto, struct nc_buff *ncb, __
 	ts = ncb_push(ncb, sizeof(struct tcp_option_timestamp));
 	ts->kind = 8;
 	ts->length = 10;
-	ts->tsval = htonl(proto->tsval);
-	ts->tsecr = htonl(proto->tsecr);
+	ts->tsval = htonl(tp->tsval);
+	ts->tsecr = htonl(tp->tsecr);
 
 	th = ncb_push(ncb, sizeof(struct tcphdr));
 
 	th->source = ncb->nc->unc.sport;
 	th->dest = ncb->nc->unc.dport;
-	th->seq = htonl(proto->snd_nxt);
-	th->ack_seq = htonl(proto->rcv_nxt);
+	th->seq = htonl(tp->snd_nxt);
+	th->ack_seq = htonl(tp->rcv_nxt);
 
 	if (flags & TCP_FLAG_SYN)
 		th->syn = 1;
@@ -192,7 +192,7 @@ static int tcp_send_data(struct common_protocol *cproto, struct nc_buff *ncb, __
 		th->rst = 1;
 	if (flags & TCP_FLAG_FIN)
 		th->fin = 1;
-	th->window = htons(proto->snd_wnd);
+	th->window = htons(tp->snd_wnd);
 	th->doff = 5 + 3 + doff;
 
 	p = (struct pseudohdr *)(((__u8 *)th) - sizeof(struct pseudohdr));
@@ -200,13 +200,13 @@ static int tcp_send_data(struct common_protocol *cproto, struct nc_buff *ncb, __
 
 	p->saddr = ncb->nc->unc.src;
 	p->daddr = ncb->nc->unc.dst;
-	p->proto = IPPROTO_TCP;
+	p->tp = IPPROTO_TCP;
 	p->len = htonl(ncb->size);
 
 	th->check = in_csum((__u16 *)p, sizeof(struct pseudohdr) + ncb->size);
 
-	proto->snd_una = proto->snd_nxt;
-	proto->snd_nxt += th->syn + th->fin + data_size - doff*4;
+	tp->snd_una = tp->snd_nxt;
+	tp->snd_nxt += th->syn + th->fin + data_size - doff*4;
 
 	return packet_ip_send(ncb);
 }
@@ -249,7 +249,7 @@ err_out_put:
 
 static int tcp_listen(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	int err;
 	struct tcphdr *th = ncb->h.th;
 	
@@ -259,20 +259,20 @@ static int tcp_listen(struct common_protocol *cproto, struct nc_buff *ncb)
 		return -1;
 
 	if (th->syn) {
-		proto->irs = ntohl(th->seq);
-		proto->rcv_nxt = ntohl(th->seq)+1;
-		proto->iss = rand();
+		tp->irs = ntohl(th->seq);
+		tp->rcv_nxt = ntohl(th->seq)+1;
+		tp->iss = rand();
 
 		err = tcp_send_bit(cproto, ncb->nc, TCP_FLAG_SYN|TCP_FLAG_ACK);
 		if (err < 0)
 			return err;
-		tcp_set_state(proto, TCP_SYN_RECV);
+		tcp_set_state(tp, TCP_SYN_RECV);
 	}
 
 	return 0;
 }
 
-static void tcp_cleanup_retransmit_queue(struct tcp_protocol *proto)
+static void tcp_cleanup_retransmit_queue(struct tcp_protocol *tp)
 {
 }
 
@@ -362,20 +362,20 @@ static void ncb_queue_check(struct tcp_protocol *tp, struct nc_buff_head *head)
 
 static int tcp_syn_sent(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
 	__u32 seq = htonl(th->seq);
 	__u32 ack = htonl(th->ack_seq);
 #if 0
 	ulog("%s: a: %d, s: %d, ack: %u, seq: %u, iss: %u, snd_nxt: %u, snd_una: %u.\n",
-			__func__, th->ack, th->syn, ack, seq, proto->iss, proto->snd_nxt, proto->snd_una);
+			__func__, th->ack, th->syn, ack, seq, tp->iss, tp->snd_nxt, tp->snd_una);
 #endif
 	if (th->ack) {
-		if (beforeeq(ack, proto->iss) || after(ack, proto->snd_nxt))
+		if (beforeeq(ack, tp->iss) || after(ack, tp->snd_nxt))
 			return (th->rst)?0:-1;
-		if (between(ack, proto->snd_una, proto->snd_nxt)) {
+		if (between(ack, tp->snd_una, tp->snd_nxt)) {
 			if (th->rst) {
-				tcp_set_state(proto, TCP_CLOSE);
+				tcp_set_state(tp, TCP_CLOSE);
 				return 0;
 			}
 		}
@@ -385,21 +385,21 @@ static int tcp_syn_sent(struct common_protocol *cproto, struct nc_buff *ncb)
 		return 0;
 
 	if (th->syn) {
-		proto->rcv_nxt = seq+1;
-		proto->irs = seq;
+		tp->rcv_nxt = seq+1;
+		tp->irs = seq;
 		if (th->ack) {
-			proto->snd_una = ack;
-			tcp_cleanup_retransmit_queue(proto);
+			tp->snd_una = ack;
+			tcp_cleanup_retransmit_queue(tp);
 		}
 
-		if (after(proto->snd_una, proto->iss)) {
-			tcp_set_state(proto, TCP_ESTABLISHED);
-			proto->seq_read = seq + 1;
+		if (after(tp->snd_una, tp->iss)) {
+			tcp_set_state(tp, TCP_ESTABLISHED);
+			tp->seq_read = seq + 1;
 			return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
 		}
 
-		tcp_set_state(proto, TCP_SYN_RECV);
-		proto->snd_nxt = proto->iss;
+		tcp_set_state(tp, TCP_SYN_RECV);
+		tp->snd_nxt = tp->iss;
 		return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK|TCP_FLAG_SYN);
 	}
 
@@ -408,25 +408,25 @@ static int tcp_syn_sent(struct common_protocol *cproto, struct nc_buff *ncb)
 
 static int tcp_syn_recv(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
 	__u32 ack = ntohl(th->ack_seq);
 
 	if (th->rst) {
-		tcp_set_state(proto, TCP_CLOSE);
+		tcp_set_state(tp, TCP_CLOSE);
 		return 0;
 	}
 
 	if (th->ack) {
-		if (between(ack, proto->snd_una, proto->snd_nxt)) {
-			proto->seq_read = ntohl(th->seq) + 1;
-			tcp_set_state(proto, TCP_ESTABLISHED);
+		if (between(ack, tp->snd_una, tp->snd_nxt)) {
+			tp->seq_read = ntohl(th->seq) + 1;
+			tcp_set_state(tp, TCP_ESTABLISHED);
 			return 0;
 		}
 	}
 
 	if (th->fin) {
-		tcp_set_state(proto, TCP_CLOSE_WAIT);
+		tcp_set_state(tp, TCP_CLOSE_WAIT);
 		return 0;
 	}
 	
@@ -435,20 +435,20 @@ static int tcp_syn_recv(struct common_protocol *cproto, struct nc_buff *ncb)
 
 static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
 	int err = -EINVAL;
 	__u32 seq = ntohl(th->seq);
 	__u32 seq_end = seq + ncb->size;
 	__u32 ack = ntohl(th->ack_seq);
 
-	if (before(seq, proto->rcv_nxt)) {
+	if (before(seq, tp->rcv_nxt)) {
 		err = 0;
 		goto out;
 	}
 
-	if (after(seq_end, proto->rcv_nxt + proto->rcv_wnd)) {
-		ulog("%s: 1: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", __func__, seq, ncb->size, proto->rcv_nxt, proto->rcv_wnd);
+	if (after(seq_end, tp->rcv_nxt + tp->rcv_wnd)) {
+		ulog("%s: 1: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", __func__, seq, ncb->size, tp->rcv_nxt, tp->rcv_wnd);
 		goto out;
 	}
 
@@ -457,27 +457,27 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 
 	ulog("%s: seq: %u, seq_end: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u.\n",
 			__func__, seq, seq_end, ack, 
-			proto->snd_una, proto->snd_nxt, proto->snd_wnd, 
-			proto->rcv_nxt, proto->rcv_wnd);
+			tp->snd_una, tp->snd_nxt, tp->snd_wnd, 
+			tp->rcv_nxt, tp->rcv_wnd);
 
-	if (between(ack, proto->snd_una, proto->snd_nxt))
-		proto->snd_una = ack;
-	else if (before(ack, proto->snd_una)) {
+	if (between(ack, tp->snd_una, tp->snd_nxt))
+		tp->snd_una = ack;
+	else if (before(ack, tp->snd_una)) {
 		ulog("%s: duplicate 3 ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
-				__func__, ack, proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->snd_wl1, proto->snd_wl2);
+				__func__, ack, tp->snd_una, tp->snd_nxt, tp->snd_wnd, tp->snd_wl1, tp->snd_wl2);
 		return 0;
-	} else if (after(ack, proto->snd_nxt)) {
+	} else if (after(ack, tp->snd_nxt)) {
 		err = tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
 		if (err < 0)
 			goto out;
 	}
 
 	if (ncb->size)
-		ncb_queue_order(ncb, &proto->ofo_queue);
+		ncb_queue_order(ncb, &tp->ofo_queue);
 
-	if (beforeeq(seq, proto->rcv_nxt) && aftereq(seq_end, proto->rcv_nxt)) {
-		proto->rcv_nxt = seq_end;
-		ncb_queue_check(proto, &proto->ofo_queue);
+	if (beforeeq(seq, tp->rcv_nxt) && aftereq(seq_end, tp->rcv_nxt)) {
+		tp->rcv_nxt = seq_end;
+		ncb_queue_check(tp, &tp->ofo_queue);
 	} else {
 		/*
 		 * Out of order packet.
@@ -486,14 +486,14 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 		goto out;
 	}
 
-	if (before(proto->snd_wl1, seq) || ((proto->snd_wl1 == seq) && beforeeq(proto->snd_wl2, ack))) {
-		proto->snd_wnd = ntohs(th->window);
-		proto->snd_wl1 = seq;
-		proto->snd_wl2 = ack;
+	if (before(tp->snd_wl1, seq) || ((tp->snd_wl1 == seq) && beforeeq(tp->snd_wl2, ack))) {
+		tp->snd_wnd = ntohs(th->window);
+		tp->snd_wl1 = seq;
+		tp->snd_wl2 = ack;
 	}
 
 	if (th->fin) {
-		tcp_set_state(proto, TCP_CLOSE_WAIT);
+		tcp_set_state(tp, TCP_CLOSE_WAIT);
 		err = 0;
 	}
 
@@ -510,22 +510,22 @@ out:
 static int tcp_fin_wait1(struct common_protocol *cproto, struct nc_buff *ncb)
 {
 	int err;
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
 	
 	if (th->fin) {
 		if (th->ack) {
 			/* Start time-wait timer... */
-			tcp_set_state(proto, TCP_TIME_WAIT);
+			tcp_set_state(tp, TCP_TIME_WAIT);
 		} else
-			tcp_set_state(proto, TCP_CLOSING);
+			tcp_set_state(tp, TCP_CLOSING);
 		return 0;
 	}
 
 	err = tcp_established(cproto, ncb);
 	if (err < 0)
 		return err;
-	tcp_set_state(proto, TCP_FIN_WAIT2);
+	tcp_set_state(tp, TCP_FIN_WAIT2);
 	return 0;
 }
 
@@ -554,7 +554,7 @@ static int tcp_close_wait(struct common_protocol *cproto, struct nc_buff *ncb)
 static int tcp_closing(struct common_protocol *cproto, struct nc_buff *ncb)
 {
 	int err;
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
 	
 	if (th->fin)
@@ -563,19 +563,19 @@ static int tcp_closing(struct common_protocol *cproto, struct nc_buff *ncb)
 	err = tcp_established(cproto, ncb);
 	if (err < 0)
 		return err;
-	tcp_set_state(proto, TCP_TIME_WAIT);
+	tcp_set_state(tp, TCP_TIME_WAIT);
 	return 0;
 }
 
 static int tcp_last_ack(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
 	
 	if (th->fin)
 		return 0;
 	
-	tcp_set_state(proto, TCP_CLOSE);
+	tcp_set_state(tp, TCP_CLOSE);
 	return 0;
 }
 
@@ -610,20 +610,20 @@ static struct state_machine tcp_state_machine[] = {
 
 static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	int err;
 	struct nc_buff *ncb;
 	struct tcp_option_mss *mss;
 	struct nc_route *dst;
 
-	proto->iss = rand();
-	proto->snd_wnd = 4096;
-	proto->snd_nxt = proto->iss;
-	proto->rcv_wnd = 0xffff;
-	proto->tsval = time(NULL);
-	proto->tsecr = 0;
-	ncb_queue_init(&proto->retransmit_queue);
-	ncb_queue_init(&proto->ofo_queue);
+	tp->iss = rand();
+	tp->snd_wnd = 4096;
+	tp->snd_nxt = tp->iss;
+	tp->rcv_wnd = 0xffff;
+	tp->tsval = time(NULL);
+	tp->tsecr = 0;
+	ncb_queue_init(&tp->retransmit_queue);
+	ncb_queue_init(&tp->ofo_queue);
 
 	dst = route_get(nc->unc.dst, nc->unc.src);
 	if (!dst)
@@ -652,7 +652,7 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 		goto err_out_free;
 
 	route_put(dst);
-	tcp_set_state(proto, TCP_SYN_SENT);
+	tcp_set_state(tp, TCP_SYN_SENT);
 	return 0;
 
 err_out_free:
@@ -664,7 +664,7 @@ err_out_put:
 
 static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	int err = -EINVAL, broken = 1;
 	struct tcphdr *th = ncb->h.th;
 	__u16 rwin = ntohs(th->window);
@@ -676,51 +676,51 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 		NIPQUAD(ncb->nc->unc.dst), ntohs(ncb->nc->unc.dport),
 		ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window), th->doff,
 		th->syn, th->ack, th->psh, th->rst, th->fin,
-		ncb->size, proto->state);
+		ncb->size, tp->state);
 
-	if (proto->state >= sizeof(tcp_state_machine)/sizeof(tcp_state_machine[0])) {
-		tcp_set_state(proto, TCP_CLOSE);
+	if (tp->state >= sizeof(tcp_state_machine)/sizeof(tcp_state_machine[0])) {
+		tcp_set_state(tp, TCP_CLOSE);
 		goto out;
 	}
 
-	if (proto->state == TCP_SYN_SENT) {
-		err = tcp_state_machine[proto->state].run(cproto, ncb);
+	if (tp->state == TCP_SYN_SENT) {
+		err = tcp_state_machine[tp->state].run(cproto, ncb);
 	} else {
-		if (!ncb->size && ((!rwin && seq == proto->rcv_nxt) || 
-					(rwin && (aftereq(seq, proto->rcv_nxt) && before(seq, proto->rcv_nxt + rwin)))))
+		if (!ncb->size && ((!rwin && seq == tp->rcv_nxt) || 
+					(rwin && (aftereq(seq, tp->rcv_nxt) && before(seq, tp->rcv_nxt + rwin)))))
 				broken = 0;
-		else if ((seq >= proto->rcv_nxt && before(seq, proto->rcv_nxt + rwin)) &&
-					(aftereq(seq, proto->rcv_nxt) && before(seq+ncb->size-1, proto->rcv_nxt + rwin)))
+		else if ((seq >= tp->rcv_nxt && before(seq, tp->rcv_nxt + rwin)) &&
+					(aftereq(seq, tp->rcv_nxt) && before(seq+ncb->size-1, tp->rcv_nxt + rwin)))
 				broken = 0;
 
 		if (broken && !th->rst) {
 			ulog("R broken: rwin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
-					rwin, seq, proto->rcv_nxt, ncb->size);
+					rwin, seq, tp->rcv_nxt, ncb->size);
 			return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
 		}
 
 		if (th->rst) {
 			ulog("R broken rst: rwin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
-					rwin, seq, proto->rcv_nxt, ncb->size);
-			tcp_set_state(proto, TCP_CLOSE);
+					rwin, seq, tp->rcv_nxt, ncb->size);
+			tcp_set_state(tp, TCP_CLOSE);
 			return 0;
 		}
 
 		if (th->syn) {
 			ulog("R broken syn: rwin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
-					rwin, seq, proto->rcv_nxt, ncb->size);
+					rwin, seq, tp->rcv_nxt, ncb->size);
 			goto out;
 		}
 
 		if (!th->ack)
 			return 0;
 
-		err = tcp_state_machine[proto->state].run(cproto, ncb);
+		err = tcp_state_machine[tp->state].run(cproto, ncb);
 
-		if (th->fin && seq == proto->rcv_nxt) {
-			if (proto->state == TCP_LISTEN || proto->state == TCP_CLOSE)
+		if (th->fin && seq == tp->rcv_nxt) {
+			if (tp->state == TCP_LISTEN || tp->state == TCP_CLOSE)
 				return 0;
-			proto->rcv_nxt++;
+			tp->rcv_nxt++;
 			tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
 		}
 	}
@@ -730,19 +730,19 @@ out:
 	ulog("E %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, state: %u, err: %d.\n",
 		NIPQUAD(ncb->nc->unc.src), ntohs(ncb->nc->unc.sport),
 		NIPQUAD(ncb->nc->unc.dst), ntohs(ncb->nc->unc.dport),
-		ntohl(th->seq), ntohl(th->ack_seq), proto->state, err);
+		ntohl(th->seq), ntohl(th->ack_seq), tp->state, err);
 #endif
 	if (err < 0) {
 		__u32 flags = TCP_FLAG_RST;
 		if (th->ack) {
-			proto->snd_nxt = ntohl(th->ack_seq);
-			//proto->rcv_nxt = ntohl(th->seq);
+			tp->snd_nxt = ntohl(th->ack_seq);
+			//tp->rcv_nxt = ntohl(th->seq);
 		} else {
 			flags |= TCP_FLAG_ACK;
-			proto->snd_nxt = 0;
-			proto->rcv_nxt = ntohl(th->seq) + ncb->size;
+			tp->snd_nxt = 0;
+			tp->rcv_nxt = ntohl(th->seq) + ncb->size;
 		}
-		tcp_set_state(proto, TCP_CLOSE);
+		tcp_set_state(tp, TCP_CLOSE);
 		tcp_send_bit(cproto, ncb->nc, flags);
 	}
 
@@ -762,12 +762,12 @@ static int tcp_process_in(struct common_protocol *cproto, struct nc_buff *ncb)
 
 static int tcp_process_out(struct common_protocol *cproto, struct nc_buff *ncb)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 
-	if (proto->state != TCP_ESTABLISHED)
+	if (tp->state != TCP_ESTABLISHED)
 		return -1;
 	
-	//ncb_queue_tail(&proto->retransmit_queue, ncb);
+	//ncb_queue_tail(&tp->retransmit_queue, ncb);
 
 	return tcp_send_data(cproto, ncb, TCP_FLAG_PSH|TCP_FLAG_ACK, 0);
 }
@@ -833,16 +833,16 @@ static int tcp_read_data(struct common_protocol *cproto, __u8 *buf, unsigned int
 
 static int tcp_destroy(struct common_protocol *cproto, struct netchannel *nc)
 {
-	struct tcp_protocol *proto = tcp_convert(cproto);
+	struct tcp_protocol *tp = tcp_convert(cproto);
 	
-	if (proto->state == TCP_SYN_RECV ||
-			proto->state == TCP_ESTABLISHED || 
-			proto->state == TCP_FIN_WAIT1 ||
-			proto->state == TCP_FIN_WAIT2 ||
-			proto->state == TCP_CLOSE_WAIT)
+	if (tp->state == TCP_SYN_RECV ||
+			tp->state == TCP_ESTABLISHED || 
+			tp->state == TCP_FIN_WAIT1 ||
+			tp->state == TCP_FIN_WAIT2 ||
+			tp->state == TCP_CLOSE_WAIT)
 		tcp_send_bit(cproto, nc, TCP_FLAG_RST);
 
-	proto->state = TCP_CLOSE;
+	tp->state = TCP_CLOSE;
 	return 0;
 }
 
