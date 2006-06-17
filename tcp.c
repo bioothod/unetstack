@@ -475,7 +475,7 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 	if (ncb->size)
 		ncb_queue_order(ncb, &proto->ofo_queue);
 
-	if (aftereq(seq_end, proto->rcv_nxt)) {
+	if (beforeeq(seq, proto->rcv_nxt) && aftereq(seq_end, proto->rcv_nxt)) {
 		proto->rcv_nxt = seq_end;
 		ncb_queue_check(proto, &proto->ofo_queue);
 	} else {
