@@ -122,6 +122,33 @@ static inline struct tcp_protocol *tcp_convert(struct common_protocol *cproto)
 #define TCP_FLAG_PSH	0x8
 #define TCP_FLAG_FIN	0x10
 
+static inline int before(__u32 seq1, __u32 seq2)
+{
+        return (__s32)(seq1-seq2) < 0;
+}
+
+static inline int beforeeq(__u32 seq1, __u32 seq2)
+{
+        return (__s32)(seq1-seq2) <= 0;
+}
+
+static inline int after(__u32 seq1, __u32 seq2)
+{
+	return (__s32)(seq2-seq1) < 0;
+}
+
+static inline int aftereq(__u32 seq1, __u32 seq2)
+{
+	return (__s32)(seq2-seq1) <= 0;
+}
+
+
+/* is s2<=s1<=s3 ? */
+static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
+{
+	return seq3 - seq2 >= seq1 - seq2;
+}
+
 static inline void tcp_set_state(struct tcp_protocol *proto, __u32 state)
 {
 	ulog("state change: %u -> %u.\n", proto->state, state);
@@ -251,7 +278,6 @@ static void tcp_cleanup_retransmit_queue(struct tcp_protocol *proto)
 
 static inline __u32 ncb_seq(struct nc_buff *ncb)
 {
-	//ulog("%s: ncb: %p, th: %p.\n", __func__, ncb, ncb->h.th);
 	return ntohl(ncb->h.th->seq);
 }
 
@@ -273,7 +299,7 @@ static void ncb_queue_order(struct nc_buff *ncb, struct nc_buff_head *head)
 		unsigned int seq = ncb_seq(next);
 		unsigned int seq_end = seq + next->size;
 
-		if (nseq >= seq && nseq_end <= seq_end) {
+		if (beforeeq(seq, nseq) && aftereq(seq_end, nseq_end)) {
 			ulog("Collapse 1: seq: %u, seq_end: %u removed by seq: %u, seq_end: %u.\n",
 					nseq, nseq_end, seq, seq_end);
 			ncb_put(ncb);
@@ -281,7 +307,7 @@ static void ncb_queue_order(struct nc_buff *ncb, struct nc_buff_head *head)
 			break;
 		}
 
-		if (nseq <= seq && nseq_end >= seq_end) {
+		if (beforeeq(nseq, seq) && aftereq(nseq_end, seq_end)) {
 			struct nc_buff *prev = next->prev;
 
 			ncb_unlink(next, head);
@@ -296,8 +322,7 @@ static void ncb_queue_order(struct nc_buff *ncb, struct nc_buff_head *head)
 			seq = ncb_seq(next);
 			seq_end = seq + next->size;
 		}
-
-		if (seq > nseq)
+		if (after(seq, nseq))
 			break;
 	} while ((next = next->next) != (struct nc_buff *)head);
 
@@ -326,7 +351,7 @@ static void ncb_queue_check(struct tcp_protocol *tp, struct nc_buff_head *head)
 		unsigned int seq = ncb_seq(next);
 		unsigned int seq_end = seq + next->size;
 
-		if (tp->rcv_nxt < seq)
+		if (before(tp->rcv_nxt, seq))
 			break;
 		
 		tp->rcv_nxt = max_t(unsigned int, seq_end, tp->rcv_nxt);
@@ -346,9 +371,9 @@ static int tcp_syn_sent(struct common_protocol *cproto, struct nc_buff *ncb)
 			__func__, th->ack, th->syn, ack, seq, proto->iss, proto->snd_nxt, proto->snd_una);
 #endif
 	if (th->ack) {
-		if (ack <= proto->iss || ack > proto->snd_nxt)
+		if (beforeeq(ack, proto->iss) || after(ack, proto->snd_nxt))
 			return (th->rst)?0:-1;
-		if (proto->snd_una <= ack && ack <= proto->snd_nxt) {
+		if (between(ack, proto->snd_una, proto->snd_nxt)) {
 			if (th->rst) {
 				tcp_set_state(proto, TCP_CLOSE);
 				return 0;
@@ -367,7 +392,7 @@ static int tcp_syn_sent(struct common_protocol *cproto, struct nc_buff *ncb)
 			tcp_cleanup_retransmit_queue(proto);
 		}
 
-		if (proto->snd_una > proto->iss) {
+		if (after(proto->snd_una, proto->iss)) {
 			tcp_set_state(proto, TCP_ESTABLISHED);
 			proto->seq_read = seq + 1;
 			return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
@@ -393,7 +418,7 @@ static int tcp_syn_recv(struct common_protocol *cproto, struct nc_buff *ncb)
 	}
 
 	if (th->ack) {
-		if (proto->snd_una <= ack && ack <= proto->snd_nxt) {
+		if (between(ack, proto->snd_una, proto->snd_nxt)) {
 			proto->seq_read = ntohl(th->seq) + 1;
 			tcp_set_state(proto, TCP_ESTABLISHED);
 			return 0;
@@ -417,13 +442,13 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 	__u32 seq_end = seq + ncb->size;
 	__u32 ack = ntohl(th->ack_seq);
 
-	if (seq < proto->rcv_nxt || seq > proto->rcv_nxt + proto->rcv_wnd) {
-		ulog("%s: 1: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", __func__, seq, ncb->size, proto->rcv_nxt, proto->rcv_wnd);
+	if (before(seq, proto->rcv_nxt)) {
+		err = 0;
 		goto out;
 	}
 
-	if (seq + ncb->size < proto->rcv_nxt || seq+ncb->size > proto->rcv_nxt + proto->rcv_wnd) {
-		ulog("%s: 2: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", __func__, seq, ncb->size, proto->rcv_nxt, proto->rcv_wnd);
+	if (after(seq_end, proto->rcv_nxt + proto->rcv_wnd)) {
+		ulog("%s: 1: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", __func__, seq, ncb->size, proto->rcv_nxt, proto->rcv_wnd);
 		goto out;
 	}
 
@@ -435,13 +460,13 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 			proto->snd_una, proto->snd_nxt, proto->snd_wnd, 
 			proto->rcv_nxt, proto->rcv_wnd);
 
-	if (proto->snd_una <= ack && ack <= proto->snd_nxt)
+	if (between(ack, proto->snd_una, proto->snd_nxt))
 		proto->snd_una = ack;
-	else if (ack < proto->snd_una) {
+	else if (before(ack, proto->snd_una)) {
 		ulog("%s: duplicate 3 ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
 				__func__, ack, proto->snd_una, proto->snd_nxt, proto->snd_wnd, proto->snd_wl1, proto->snd_wl2);
 		return 0;
-	} else if (ack > proto->snd_nxt) {
+	} else if (after(ack, proto->snd_nxt)) {
 		err = tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
 		if (err < 0)
 			goto out;
@@ -450,7 +475,7 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 	if (ncb->size)
 		ncb_queue_order(ncb, &proto->ofo_queue);
 
-	if (seq <= proto->rcv_nxt && seq_end >= proto->rcv_nxt) {
+	if (aftereq(seq_end, proto->rcv_nxt)) {
 		proto->rcv_nxt = seq_end;
 		ncb_queue_check(proto, &proto->ofo_queue);
 	} else {
@@ -461,7 +486,7 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 		goto out;
 	}
 
-	if ((proto->snd_wl1 < seq) || (proto->snd_wl1 == seq && proto->snd_wl2 <= ack)) {
+	if (before(proto->snd_wl1, seq) || ((proto->snd_wl1 == seq) && beforeeq(proto->snd_wl2, ack))) {
 		proto->snd_wnd = ntohs(th->window);
 		proto->snd_wl1 = seq;
 		proto->snd_wl2 = ack;
@@ -662,10 +687,10 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 		err = tcp_state_machine[proto->state].run(cproto, ncb);
 	} else {
 		if (!ncb->size && ((!rwin && seq == proto->rcv_nxt) || 
-					(rwin && (seq >= proto->rcv_nxt && seq < proto->rcv_nxt + rwin))))
+					(rwin && (aftereq(seq, proto->rcv_nxt) && before(seq, proto->rcv_nxt + rwin)))))
 				broken = 0;
-		else if ((seq >= proto->rcv_nxt && seq < proto->rcv_nxt + rwin) &&
-					(seq >= proto->rcv_nxt && seq+ncb->size-1 < proto->rcv_nxt + rwin))
+		else if ((seq >= proto->rcv_nxt && before(seq, proto->rcv_nxt + rwin)) &&
+					(aftereq(seq, proto->rcv_nxt) && before(seq+ncb->size-1, proto->rcv_nxt + rwin)))
 				broken = 0;
 
 		if (broken && !th->rst) {
@@ -764,7 +789,7 @@ static int tcp_read_data(struct common_protocol *cproto, __u8 *buf, unsigned int
 		unsigned int sz, data_size, off;
 		struct nc_buff *next = ncb->next;
 
-		if (tp->seq_read > seq_end) {
+		if (after(tp->seq_read, seq_end)) {
 			ulog("Impossible: ncb: seq: %u, seq_end: %u, seq_read: %u.\n",
 					seq, seq_end, tp->seq_read);
 
@@ -775,7 +800,7 @@ static int tcp_read_data(struct common_protocol *cproto, __u8 *buf, unsigned int
 			continue;
 		}
 
-		if (tp->seq_read < seq)
+		if (before(tp->seq_read, seq))
 			break;
 
 		off = tp->seq_read - seq;
@@ -792,7 +817,7 @@ static int tcp_read_data(struct common_protocol *cproto, __u8 *buf, unsigned int
 
 		tp->seq_read += sz;
 
-		if (tp->seq_read >= seq) {
+		if (aftereq(tp->seq_read, seq)) {
 			ulog("Unlinking: ncb: seq: %u, seq_end: %u, seq_read: %u.\n",
 					seq, seq_end, tp->seq_read);
 
