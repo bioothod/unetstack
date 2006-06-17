@@ -190,6 +190,24 @@ static inline struct nc_buff *ncb_dequeue(struct nc_buff_head *list)
 	return result;
 }
 
+static inline void ncb_insert(struct nc_buff *newsk,
+				struct nc_buff *prev, struct nc_buff *next,
+				struct nc_buff_head *list)
+{
+	newsk->next = next;
+	newsk->prev = prev;
+	next->prev  = prev->next = newsk;
+	list->qlen++;
+}
+
+static inline struct nc_buff *ncb_peek(struct nc_buff_head *list_)
+{
+	struct nc_buff *list = ((struct nc_buff *)list_)->next;
+	if (list == (struct nc_buff *)list_)
+		list = NULL;
+	return list;
+}
+
 static inline void netchannel_flush_list_head(struct nc_buff_head *list)
 {
 	struct nc_buff *ncb;
