@@ -62,8 +62,6 @@ enum {
 };
 #endif
 
-#define TCP_OPT_VALID_TS	0x1
-
 struct tcp_protocol
 {
 	struct common_protocol	cproto;
@@ -82,10 +80,9 @@ struct tcp_protocol
 	__u16			rcv_wup;
 	__u32			irs;
 
-	__u32			optflags;
-
 	__u16			mss;
 	__u32			tsval, tsecr;
+	__u32			ack_sent;
 
 	struct nc_buff_head	retransmit_queue;
 	struct nc_buff_head	ofo_queue;
@@ -105,60 +102,15 @@ static inline struct tcp_protocol *tcp_convert(struct common_protocol *cproto)
 	return (struct tcp_protocol *)cproto;
 }
 
-struct tcp_option
+static inline __u32 ncb_seq(struct nc_buff *ncb)
 {
-	__u8		kind, length;
-	int		(*callback)(struct tcp_protocol *tp, struct tcphdr *th, __u8 *data);
-};
-
-struct tcp_option_timestamp
-{
-	__u8			kind, length;
-	__u32			tsval, tsecr;
-} __attribute__ ((packed));
-
-struct tcp_option_nop
-{
-	__u8			kind;
-} __attribute__ ((packed));
-
-struct tcp_option_mss
-{
-	__u8			kind, length;
-	__u16			mss;
-} __attribute__ ((packed));
-
-#define TCP_OPT_NOP	1
-#define TCP_OPT_MSS	2
-#define TCP_OPT_TS	8
-
-static int tcp_opt_mss(struct tcp_protocol *tp, struct tcphdr *th __attribute__ ((unused)), __u8 *data)
-{
-	tp->mss = ntohs(((__u16 *)data)[0]);
-	ulog("%s: mss: %u.\n", __func__, tp->mss);
-	return 0;
+	return ntohl(ncb->h.th->seq);
 }
 
-static int tcp_opt_ts(struct tcp_protocol *tp, struct tcphdr *th, __u8 *data)
+static inline __u32 ncb_ack(struct nc_buff *ncb)
 {
-	if (!th->ack || !(tp->optflags & TCP_OPT_VALID_TS))
-		return 0;
-	tp->tsecr = ntohl(((__u32 *)data)[0]);
-	ulog("%s: tsval: %u, tsecr: %u.\n", __func__, tp->tsecr, ntohl(((__u32 *)data)[1]));
-	return 0;
+	return ntohl(ncb->h.th->ack_seq);
 }
-
-static struct tcp_option tcp_supported_options[] = {
-	[TCP_OPT_NOP] = {.kind = TCP_OPT_NOP, .length = 1},
-	[TCP_OPT_MSS] = {.kind = TCP_OPT_MSS, .length = 4, .callback = &tcp_opt_mss},
-	[TCP_OPT_TS] = {.kind = TCP_OPT_TS, .length = 10, .callback = &tcp_opt_ts},
-};
-
-#define TCP_FLAG_SYN	0x1
-#define TCP_FLAG_ACK	0x2
-#define TCP_FLAG_RST	0x4
-#define TCP_FLAG_PSH	0x8
-#define TCP_FLAG_FIN	0x10
 
 static inline int before(__u32 seq1, __u32 seq2)
 {
@@ -185,6 +137,65 @@ static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
 {
 	return seq3 - seq2 >= seq1 - seq2;
 }
+
+struct tcp_option
+{
+	__u8		kind, length;
+	int		(*callback)(struct tcp_protocol *tp, struct nc_buff *ncb, __u8 *data);
+};
+
+struct tcp_option_timestamp
+{
+	__u8			kind, length;
+	__u32			tsval, tsecr;
+} __attribute__ ((packed));
+
+struct tcp_option_nop
+{
+	__u8			kind;
+} __attribute__ ((packed));
+
+struct tcp_option_mss
+{
+	__u8			kind, length;
+	__u16			mss;
+} __attribute__ ((packed));
+
+#define TCP_OPT_NOP	1
+#define TCP_OPT_MSS	2
+#define TCP_OPT_TS	8
+
+static int tcp_opt_mss(struct tcp_protocol *tp, struct nc_buff *ncb __attribute__ ((unused)), __u8 *data)
+{
+	tp->mss = ntohs(((__u16 *)data)[0]);
+	ulog("%s: mss: %u.\n", __func__, tp->mss);
+	return 0;
+}
+
+static int tcp_opt_ts(struct tcp_protocol *tp, struct nc_buff *ncb, __u8 *data)
+{
+	__u32 seq = ncb_seq(ncb);
+	__u32 seq_end = seq + ncb->size - 1;
+
+	if (!ncb->h.th->ack)
+		return 0;
+	if (between(tp->ack_sent, seq, seq_end))
+		tp->tsecr = ntohl(((__u32 *)data)[0]);
+	ulog("%s: tsval: %u, tsecr: %u.\n", __func__, tp->tsecr, ntohl(((__u32 *)data)[1]));
+	return 0;
+}
+
+static struct tcp_option tcp_supported_options[] = {
+	[TCP_OPT_NOP] = {.kind = TCP_OPT_NOP, .length = 1},
+	[TCP_OPT_MSS] = {.kind = TCP_OPT_MSS, .length = 4, .callback = &tcp_opt_mss},
+	[TCP_OPT_TS] = {.kind = TCP_OPT_TS, .length = 10, .callback = &tcp_opt_ts},
+};
+
+#define TCP_FLAG_SYN	0x1
+#define TCP_FLAG_ACK	0x2
+#define TCP_FLAG_RST	0x4
+#define TCP_FLAG_PSH	0x8
+#define TCP_FLAG_FIN	0x10
 
 static inline void tcp_set_state(struct tcp_protocol *tp, __u32 state)
 {
@@ -244,6 +255,7 @@ static int tcp_send_data(struct common_protocol *cproto, struct nc_buff *ncb, __
 
 	tp->snd_una = tp->snd_nxt;
 	tp->snd_nxt += th->syn + th->fin + data_size - doff*4;
+	tp->ack_sent = tp->rcv_nxt;
 
 	return packet_ip_send(ncb);
 }
@@ -322,16 +334,6 @@ static void tcp_cleanup_retransmit_queue(struct tcp_protocol *tp)
 		ncb_put(n);
 		n = ncb;
 	} while (n != (struct nc_buff *)&tp->retransmit_queue);
-}
-
-static inline __u32 ncb_seq(struct nc_buff *ncb)
-{
-	return ntohl(ncb->h.th->seq);
-}
-
-static inline __u32 ncb_ack(struct nc_buff *ncb)
-{
-	return ntohl(ncb->h.th->ack_seq);
 }
 
 static void ncb_queue_order(struct nc_buff *ncb, struct nc_buff_head *head)
@@ -770,7 +772,7 @@ static int tcp_parse_options(struct tcp_protocol *tp, struct nc_buff *ncb)
 				break;
 			}
 			if (tcp_supported_options[kind].callback) {
-				err = tcp_supported_options[kind].callback(tp, th, opt);
+				err = tcp_supported_options[kind].callback(tp, ncb, opt);
 				if (err)
 					break;
 			}
