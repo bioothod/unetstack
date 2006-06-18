@@ -312,6 +312,17 @@ static int tcp_listen(struct common_protocol *cproto, struct nc_buff *ncb)
 
 static void tcp_cleanup_retransmit_queue(struct tcp_protocol *tp)
 {
+	struct nc_buff *ncb, *n = ncb_peek(&tp->retransmit_queue);
+
+	if (!n)
+		return;
+
+	do {
+		ncb = n->next;
+		ncb_unlink(n, &tp->retransmit_queue);
+		ncb_put(n);
+		n = ncb;
+	} while (n != (struct nc_buff *)&tp->retransmit_queue);
 }
 
 static inline __u32 ncb_seq(struct nc_buff *ncb)
