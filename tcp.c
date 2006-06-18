@@ -176,12 +176,22 @@ static int tcp_opt_ts(struct tcp_protocol *tp, struct nc_buff *ncb, __u8 *data)
 {
 	__u32 seq = ncb_seq(ncb);
 	__u32 seq_end = seq + ncb->size - 1;
+	__u32 packet_tsval = ntohl(((__u32 *)data)[0]);
+	__u32 packet_tsecr = ntohl(((__u32 *)data)[1]);
 
 	if (!ncb->h.th->ack)
 		return 0;
+
+	/* PAWS check */
+	if ((tp->state == TCP_ESTABLISHED) && before(packet_tsval, tp->tsecr)) {
+		ulog("%s: PAWS failed: packet: seq: %u, seq_end: %u, tsval: %u, tsecr: %u, host tsval: %u, tsecr: %u.\n",
+				__func__, seq, seq_end, packet_tsval, packet_tsecr, tp->tsval, tp->tsecr);
+		return 1;
+	}
+	
 	if (between(tp->ack_sent, seq, seq_end))
-		tp->tsecr = ntohl(((__u32 *)data)[0]);
-	ulog("%s: tsval: %u, tsecr: %u.\n", __func__, tp->tsecr, ntohl(((__u32 *)data)[1]));
+		tp->tsecr = packet_tsval;
+	ulog("%s: tsval: %u, tsecr: %u.\n", __func__, tp->tsecr, packet_tsecr);
 	return 0;
 }
 
@@ -806,8 +816,12 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 	}
 
 	err = tcp_parse_options(tp, ncb);
-	if (err)
+	if (err < 0)
 		goto out;
+	if (err > 0) {
+		err = 0;
+		return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
+	}
 
 	if (tp->state == TCP_SYN_SENT) {
 		err = tcp_state_machine[tp->state].run(cproto, ncb);
