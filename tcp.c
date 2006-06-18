@@ -62,6 +62,8 @@ enum {
 };
 #endif
 
+static __u8 tcp_offer_wscale = 2;
+
 struct tcp_protocol
 {
 	struct common_protocol	cproto;
@@ -80,9 +82,11 @@ struct tcp_protocol
 	__u16			rcv_wup;
 	__u32			irs;
 
+	__u8			rwscale, swscale;
 	__u16			mss;
 	__u32			tsval, tsecr;
 	__u32			ack_sent;
+
 
 	struct nc_buff_head	retransmit_queue;
 	struct nc_buff_head	ofo_queue;
@@ -105,6 +109,24 @@ static inline struct tcp_protocol *tcp_convert(struct common_protocol *cproto)
 static inline __u32 ncb_seq(struct nc_buff *ncb)
 {
 	return ntohl(ncb->h.th->seq);
+}
+
+static inline __u32 ncb_rwin(struct tcp_protocol *tp, struct nc_buff *ncb)
+{
+	__u32 rwin = ntohl(ncb->h.th->window);
+	return (rwin << tp->rwscale);
+}
+
+static inline __u32 tp_rwin(struct tcp_protocol *tp)
+{
+	__u32 rwin = tp->rcv_wnd;
+	return rwin << tp->rwscale;
+}
+
+static inline __u32 tp_swin(struct tcp_protocol *tp)
+{
+	__u32 swin = tp->snd_wnd;
+	return swin << tp->swscale;
 }
 
 static inline __u32 ncb_ack(struct nc_buff *ncb)
@@ -161,14 +183,31 @@ struct tcp_option_mss
 	__u16			mss;
 } __attribute__ ((packed));
 
+struct tcp_option_wscale
+{
+	__u8			kind, length;
+	__u8			wscale;
+} __attribute__ ((packed));
+
 #define TCP_OPT_NOP	1
 #define TCP_OPT_MSS	2
+#define TCP_OPT_WSCALE	3
 #define TCP_OPT_TS	8
 
 static int tcp_opt_mss(struct tcp_protocol *tp, struct nc_buff *ncb __attribute__ ((unused)), __u8 *data)
 {
 	tp->mss = ntohs(((__u16 *)data)[0]);
 	ulog("%s: mss: %u.\n", __func__, tp->mss);
+	return 0;
+}
+
+static int tcp_opt_wscale(struct tcp_protocol *tp, struct nc_buff *ncb __attribute__ ((unused)), __u8 *data)
+{
+	if ((ncb->h.th->syn) && ((tp->state == TCP_SYN_SENT) || (tp->state == TCP_SYN_SENT))) {
+		tp->rwscale = data[0];
+		tp->swscale = tcp_offer_wscale;
+		ulog("%s: rwscale: %u, swscale: %u.\n", __func__, tp->rwscale, tp->swscale);
+	}
 	return 0;
 }
 
@@ -198,6 +237,7 @@ static int tcp_opt_ts(struct tcp_protocol *tp, struct nc_buff *ncb, __u8 *data)
 static struct tcp_option tcp_supported_options[] = {
 	[TCP_OPT_NOP] = {.kind = TCP_OPT_NOP, .length = 1},
 	[TCP_OPT_MSS] = {.kind = TCP_OPT_MSS, .length = 4, .callback = &tcp_opt_mss},
+	[TCP_OPT_WSCALE] = {.kind = TCP_OPT_WSCALE, .length = 3, .callback = &tcp_opt_wscale},
 	[TCP_OPT_TS] = {.kind = TCP_OPT_TS, .length = 10, .callback = &tcp_opt_ts},
 };
 
@@ -526,15 +566,16 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 	__u32 seq = ntohl(th->seq);
 	__u32 seq_end = seq + ncb->size;
 	__u32 ack = ntohl(th->ack_seq);
+	__u32 rwin = tp_rwin(tp);
 
 	if (before(seq, tp->rcv_nxt)) {
 		err = 0;
 		goto out;
 	}
 
-	if (after(seq_end, tp->rcv_nxt + tp->rcv_wnd)) {
+	if (after(seq_end, tp->rcv_nxt + rwin)) {
 		ulog("%s: 1: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", 
-				__func__, seq, ncb->size, tp->rcv_nxt, tp->rcv_wnd);
+				__func__, seq, ncb->size, tp->rcv_nxt, rwin);
 		goto out;
 	}
 
@@ -543,14 +584,14 @@ static int tcp_established(struct common_protocol *cproto, struct nc_buff *ncb)
 
 	ulog("%s: seq: %u, seq_end: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u.\n",
 			__func__, seq, seq_end, ack, 
-			tp->snd_una, tp->snd_nxt, tp->snd_wnd, 
-			tp->rcv_nxt, tp->rcv_wnd);
+			tp->snd_una, tp->snd_nxt, tp_swin(tp), 
+			tp->rcv_nxt, rwin);
 
 	if (between(ack, tp->snd_una, tp->snd_nxt))
 		tp->snd_una = ack;
 	else if (before(ack, tp->snd_una)) {
 		ulog("%s: duplicate 3 ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
-				__func__, ack, tp->snd_una, tp->snd_nxt, tp->snd_wnd, tp->snd_wl1, tp->snd_wl2);
+				__func__, ack, tp->snd_una, tp->snd_nxt, tp_swin(tp), tp->snd_wl1, tp->snd_wl2);
 		return 0;
 	} else if (after(ack, tp->snd_nxt)) {
 		err = tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
@@ -703,12 +744,16 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 	int err;
 	struct nc_buff *ncb;
 	struct tcp_option_mss *mss;
+	struct tcp_option_wscale *wscale;
+	struct tcp_option_nop *nop;
 	struct nc_route *dst;
 
 	tp->iss = rand();
 	tp->snd_wnd = 4096;
 	tp->snd_nxt = tp->iss;
 	tp->rcv_wnd = 0xffff;
+	tp->rwscale = 0;
+	tp->swscale = 0;
 	tp->tsval = time(NULL);
 	tp->tsecr = 0;
 	ncb_queue_init(&tp->retransmit_queue);
@@ -731,11 +776,18 @@ static int tcp_connect(struct common_protocol *cproto, struct netchannel *nc)
 	ncb_pull(ncb, dst->header_size);
 
 	mss = ncb_push(ncb, sizeof(struct tcp_option_mss));
-
 	mss->kind = TCP_OPT_MSS;
 	mss->length = tcp_supported_options[TCP_OPT_MSS].length;
 	tp->mss = 1460;
 	mss->mss = htons(tp->mss);
+
+	nop = ncb_push(ncb, sizeof(struct tcp_option_nop));
+	nop->kind = 1;
+	
+	wscale = ncb_push(ncb, sizeof(struct tcp_option_wscale));
+	wscale->kind = TCP_OPT_WSCALE;
+	wscale->length = tcp_supported_options[TCP_OPT_WSCALE].length;
+	wscale->wscale = tcp_offer_wscale;
 
 	err = tcp_send_data(cproto, ncb, TCP_FLAG_SYN, ncb->size/4);
 	if (err < 0)
@@ -791,6 +843,7 @@ static int tcp_parse_options(struct tcp_protocol *tp, struct nc_buff *ncb)
 		optsize -= len;
 	}
 
+	ulog("%s: return: %d.\n", __func__, err);
 	return err;
 }
 
@@ -799,25 +852,30 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 	struct tcp_protocol *tp = tcp_convert(cproto);
 	int err = -EINVAL, broken = 1;
 	struct tcphdr *th = ncb->h.th;
-	__u16 rwin = ntohs(th->window);
-	__u32 seq = htonl(th->seq);
+	__u16 rwin = ncb_rwin(tp, ncb);
+	__u32 seq = ncb_seq(ncb);
 
 	ulog("R %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
 			"s: %u, a: %u, p: %u, r: %u, f: %u, len: %u, state: %u.\n",
 		NIPQUAD(ncb->nc->unc.src), ntohs(ncb->nc->unc.sport),
 		NIPQUAD(ncb->nc->unc.dst), ntohs(ncb->nc->unc.dport),
-		ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window), th->doff,
+		ntohl(th->seq), ntohl(th->ack_seq), rwin, th->doff,
 		th->syn, th->ack, th->psh, th->rst, th->fin,
 		ncb->size, tp->state);
 
 	/* Some kind of header prediction. */
 	if ((tp->state == TCP_ESTABLISHED) && (seq == tp->rcv_nxt)) {
+		int sz;
+
 		err = tcp_established(cproto, ncb);
 		if (err < 0)
 			goto out;
+		sz = err;
 		err = tcp_parse_options(tp, ncb);
 		if (err > 0)
 			return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
+		if (err == 0)
+			err = sz;
 		goto out;
 	}
 
