@@ -869,6 +869,7 @@ out:
 		}
 		tcp_set_state(tp, TCP_CLOSE);
 		tcp_send_bit(cproto, ncb->nc, flags);
+		tcp_cleanup_retransmit_queue(tp);
 	}
 
 	return err;
