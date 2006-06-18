@@ -62,6 +62,7 @@ enum {
 };
 #endif
 
+#define TCP_MAX_WSCALE	14
 static __u8 tcp_offer_wscale = 2;
 
 struct tcp_protocol
@@ -205,6 +206,8 @@ static int tcp_opt_wscale(struct tcp_protocol *tp, struct nc_buff *ncb __attribu
 {
 	if ((ncb->h.th->syn) && ((tp->state == TCP_SYN_SENT) || (tp->state == TCP_SYN_SENT))) {
 		tp->rwscale = data[0];
+		if (tp->rwscale > TCP_MAX_WSCALE)
+			tp->rwscale = TCP_MAX_WSCALE;
 		tp->swscale = tcp_offer_wscale;
 		ulog("%s: rwscale: %u, swscale: %u.\n", __func__, tp->rwscale, tp->swscale);
 	}
