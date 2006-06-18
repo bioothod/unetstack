@@ -76,7 +76,7 @@ struct tcp_protocol
 	__u32			snd_wl1;
 	__u32			snd_wl2;
 	__u32			iss;
-	
+
 	__u32			rcv_nxt;
 	__u16			rcv_wnd;
 	__u16			rcv_wup;
@@ -179,7 +179,6 @@ static inline int aftereq(__u32 seq1, __u32 seq2)
 {
 	return (__s32)(seq2-seq1) <= 0;
 }
-
 
 /* is s2<=s1<=s3 ? */
 static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
@@ -290,7 +289,7 @@ static int tcp_listen(struct common_protocol *cproto, struct nc_buff *ncb)
 	struct tcp_protocol *tp = tcp_convert(cproto);
 	int err;
 	struct tcphdr *th = ncb->h.th;
-	
+
 	if (th->rst)
 		return 0;
 	if (th->ack)
@@ -340,7 +339,7 @@ static void ncb_queue_order(struct nc_buff *ncb, struct nc_buff_head *head)
 	struct nc_buff *next = ncb_peek(head);
 	unsigned int nseq = ncb_seq(ncb);
 	unsigned int nseq_end = nseq + ncb->size;
-	
+
 	ulog("ofo queue: seq: %u, seq_end: %u.\n", nseq, nseq_end);
 
 	if (!next) {
@@ -365,7 +364,7 @@ static void ncb_queue_order(struct nc_buff *ncb, struct nc_buff_head *head)
 			struct nc_buff *prev = next->prev;
 
 			ncb_unlink(next, head);
-			
+
 			ulog("Collapse 2: seq: %u, seq_end: %u removed by seq: %u, seq_end: %u.\n",
 					seq, seq_end, nseq, nseq_end);
 
@@ -407,7 +406,7 @@ static void ncb_queue_check(struct tcp_protocol *tp, struct nc_buff_head *head)
 
 		if (before(tp->rcv_nxt, seq))
 			break;
-		
+
 		tp->rcv_nxt = max_t(unsigned int, seq_end, tp->rcv_nxt);
 	} while ((next = next->next) != (struct nc_buff *)head);
 
@@ -483,7 +482,7 @@ static int tcp_syn_recv(struct common_protocol *cproto, struct nc_buff *ncb)
 		tcp_set_state(tp, TCP_CLOSE_WAIT);
 		return 0;
 	}
-	
+
 	return -1;
 }
 
@@ -498,7 +497,7 @@ static void tcp_process_ack(struct tcp_protocol *tp, struct nc_buff *ncb)
 	do {
 		__u32 ret_seq_end = ncb_seq(n) + n->size;
 		ncb = n->next;
-		
+
 		if (before(ret_seq_end, ack)) {
 			ncb_unlink(n, &tp->retransmit_queue);
 			ncb_put(n);
@@ -590,7 +589,7 @@ static int tcp_fin_wait1(struct common_protocol *cproto, struct nc_buff *ncb)
 	int err;
 	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
-	
+
 	if (th->fin) {
 		if (th->ack) {
 			/* Start time-wait timer... */
@@ -610,7 +609,7 @@ static int tcp_fin_wait1(struct common_protocol *cproto, struct nc_buff *ncb)
 static int tcp_fin_wait2(struct common_protocol *cproto, struct nc_buff *ncb)
 {
 	struct tcphdr *th = ncb->h.th;
-	
+
 	if (th->fin) {
 		/* Start time-wait timer... */
 		return 0;
@@ -634,7 +633,7 @@ static int tcp_closing(struct common_protocol *cproto, struct nc_buff *ncb)
 	int err;
 	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
-	
+
 	if (th->fin)
 		return 0;
 
@@ -649,10 +648,10 @@ static int tcp_last_ack(struct common_protocol *cproto, struct nc_buff *ncb)
 {
 	struct tcp_protocol *tp = tcp_convert(cproto);
 	struct tcphdr *th = ncb->h.th;
-	
+
 	if (th->fin)
 		return 0;
-	
+
 	tcp_set_state(tp, TCP_CLOSE);
 	return 0;
 }
@@ -750,7 +749,7 @@ static int tcp_parse_options(struct tcp_protocol *tp, struct nc_buff *ncb)
 
 	if (optsize < 0)
 		return -EINVAL;
-	
+
 	while (optsize) {
 		__u8 kind = *opt++;
 		__u8 len; 
@@ -790,7 +789,7 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 	struct tcphdr *th = ncb->h.th;
 	__u16 rwin = ntohs(th->window);
 	__u32 seq = htonl(th->seq);
-	
+
 	ulog("R %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
 			"s: %u, a: %u, p: %u, r: %u, f: %u, len: %u, state: %u.\n",
 		NIPQUAD(ncb->nc->unc.src), ntohs(ncb->nc->unc.sport),
@@ -880,7 +879,7 @@ static int tcp_process_in(struct common_protocol *cproto, struct nc_buff *ncb)
 	struct tcphdr *th = ncb->h.raw = ncb_pull(ncb, sizeof(struct tcphdr));
 	if (!ncb->h.raw)
 		return -EINVAL;
-	
+
 	ncb_pull(ncb, th->doff * 4 - sizeof(struct tcphdr));
 
 	return tcp_state_machine_run(cproto, ncb);
@@ -961,7 +960,7 @@ static int tcp_read_data(struct common_protocol *cproto, __u8 *buf, unsigned int
 static int tcp_destroy(struct common_protocol *cproto, struct netchannel *nc)
 {
 	struct tcp_protocol *tp = tcp_convert(cproto);
-	
+
 	if (tp->state == TCP_SYN_RECV ||
 			tp->state == TCP_ESTABLISHED || 
 			tp->state == TCP_FIN_WAIT1 ||
