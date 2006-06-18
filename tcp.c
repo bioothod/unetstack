@@ -810,18 +810,22 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 		th->syn, th->ack, th->psh, th->rst, th->fin,
 		ncb->size, tp->state);
 
-	if (tp->state >= sizeof(tcp_state_machine)/sizeof(tcp_state_machine[0])) {
-		tcp_set_state(tp, TCP_CLOSE);
+	/* Some kind of header prediction. */
+	if ((tp->state == TCP_ESTABLISHED) && (seq == tp->rcv_nxt)) {
+		err = tcp_established(cproto, ncb);
+		if (err < 0)
+			goto out;
+		err = tcp_parse_options(tp, ncb);
+		if (err > 0)
+			return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
 		goto out;
 	}
 
 	err = tcp_parse_options(tp, ncb);
 	if (err < 0)
 		goto out;
-	if (err > 0) {
-		err = 0;
+	if (err > 0)
 		return tcp_send_bit(cproto, ncb->nc, TCP_FLAG_ACK);
-	}
 
 	if (tp->state == TCP_SYN_SENT) {
 		err = tcp_state_machine[tp->state].run(cproto, ncb);
@@ -829,7 +833,7 @@ static int tcp_state_machine_run(struct common_protocol *cproto, struct nc_buff 
 		if (!ncb->size && ((!rwin && seq == tp->rcv_nxt) || 
 					(rwin && (aftereq(seq, tp->rcv_nxt) && before(seq, tp->rcv_nxt + rwin)))))
 				broken = 0;
-		else if ((seq >= tp->rcv_nxt && before(seq, tp->rcv_nxt + rwin)) &&
+		else if ((aftereq(seq, tp->rcv_nxt) && before(seq, tp->rcv_nxt + rwin)) &&
 					(aftereq(seq, tp->rcv_nxt) && before(seq+ncb->size-1, tp->rcv_nxt + rwin)))
 				broken = 0;
 
