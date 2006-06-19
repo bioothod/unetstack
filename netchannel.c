@@ -145,9 +145,8 @@ void netchannel_fini(void)
 {
 	unsigned int i, num = (1 << netchannel_hash_order);
 
-	for (i=0; i<num; ++i) {
+	for (i=0; i<num; ++i)
 		free(netchannel_hash_table[i]);
-	}
 
 	free(netchannel_hash_table);
 }
@@ -265,7 +264,7 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 		err = nc->proto->process_in(nc->proto, ncb);
 
 		ulog("process_in: err: %d.\n", err);
-		
+
 		if (err <= 0) {
 			ncb_put(ncb);
 			break;
@@ -279,7 +278,7 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 			buf += err;
 			read += err;
 		}
-		
+
 		ncb_put(ncb);
 	}
 
