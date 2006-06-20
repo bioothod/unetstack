@@ -37,10 +37,9 @@
 
 #include "sys.h"
 
-int packet_eth_send(struct nc_buff *ncb)
+int eth_build_header(struct nc_buff *ncb)
 {
 	struct ether_header *eth;
-	int err;
 
 	eth = ncb_push(ncb, sizeof(struct ether_header));
 	if (!eth)
@@ -49,12 +48,6 @@ int packet_eth_send(struct nc_buff *ncb)
 	memcpy(eth->ether_dhost, ncb->dst->edst, ETH_ALEN);
 	memcpy(eth->ether_shost, ncb->dst->esrc, ETH_ALEN);
 	eth->ether_type = htons(ETH_P_IP);
-
-	err = packet_send(ncb);
-	if (err)
-		return err;
-
-	ncb_put(ncb);
 	return 0;
 }
 
@@ -73,7 +66,6 @@ int packet_eth_process(void *data, unsigned int size)
 	eth = ncb_pull(ncb, sizeof(struct ether_header));
 	if (!eth)
 		goto err_out_free;
-
 
 	if (ntohs(eth->ether_type) != ETH_P_IP) {
 		err = -1;

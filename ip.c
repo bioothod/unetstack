@@ -40,11 +40,11 @@
 
 #include "sys.h"
 
-int packet_ip_send(struct nc_buff *ncb)
+int ip_build_header(struct nc_buff *ncb)
 {
 	struct iphdr *iph;
 
-	iph = ncb_push(ncb, sizeof(struct iphdr));
+	ncb->nh.iph = iph = ncb_push(ncb, sizeof(struct iphdr));
 	if (!iph)
 		return -ENOMEM;
 
@@ -61,18 +61,18 @@ int packet_ip_send(struct nc_buff *ncb)
 	iph->protocol = ncb->dst->proto;
 
 	iph->check = in_csum((__u16 *)iph, iph->ihl*4);
-		
-	if (ncb->dst->proto == IPPROTO_TCP) {
-		struct tcphdr *th = (struct tcphdr *)(((__u8 *)iph) + iph->ihl*4);
-		ulog("S %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
-			"s: %u, a: %u, p: %u, r: %u, f: %u: tlen: %u.\n",
-			NIPQUAD(iph->saddr), ntohs(th->source),
-			NIPQUAD(iph->daddr), ntohs(th->dest),
-			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window), th->doff,
-			th->syn, th->ack, th->psh, th->rst, th->fin,
-			ntohs(iph->tot_len));
-	}
-	return packet_eth_send(ncb);
+
+	return eth_build_header(ncb);
+}
+
+int ip_send_data(struct nc_buff *ncb)
+{
+	int err;
+
+	err = ip_build_header(ncb);
+	if (err < 0)
+		return err;
+	return transmit_data(ncb);
 }
 
 int packet_ip_process(struct nc_buff *ncb)

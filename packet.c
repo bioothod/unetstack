@@ -43,14 +43,33 @@
 
 static int need_exit;
 static int packet_socket;
-//static int alarm_timeout = 5;
+static int alarm_timeout = 1;
+unsigned int packet_timestamp;
+static struct timeval tm1, tm2;
+static unsigned long bytes_sent, error;
 
 static void term_signal(int signo)
 {
 	need_exit = signo;
 }
 
-int packet_send(struct nc_buff *ncb)
+static void alarm_signal(int signo __attribute__ ((unused)))
+{
+	double diff, speed = 0.0, espeed = 0.0;
+
+	packet_timestamp = time(NULL);
+	gettimeofday(&tm2, NULL);
+	diff = (tm2.tv_sec - tm1.tv_sec)*1000000 + tm2.tv_usec - tm1.tv_usec;
+	if (diff != 0) {
+		speed = ((double)bytes_sent)*1000000.0/((double)diff*1024.0*1024.0);
+		espeed = ((double)error)*1000000.0/((double)diff*1024.0*1024.0);
+	}
+	fprintf(stderr, "%s: time: %f, bytes_sent: %lu, speed: %f [%f], errors: %lu.\n", 
+			__func__, ((double)diff)/1000000.0, bytes_sent, speed, speed+espeed, error);
+	alarm(alarm_timeout);
+}
+
+static int packet_send(struct nc_buff *ncb)
 {
 	struct pollfd pfd;
 	int err;
@@ -79,6 +98,30 @@ int packet_send(struct nc_buff *ncb)
 		return err;
 	}
 
+	return 0;
+}
+
+int transmit_data(struct nc_buff *ncb)
+{
+	int err;
+
+	if (ncb->dst->proto == IPPROTO_TCP) {
+		struct iphdr *iph = ncb->nh.iph;
+		struct tcphdr *th = ncb->h.th;
+		ulog("S %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
+			"s: %u, a: %u, p: %u, r: %u, f: %u: tlen: %u.\n",
+			NIPQUAD(iph->saddr), ntohs(th->source),
+			NIPQUAD(iph->daddr), ntohs(th->dest),
+			ntohl(th->seq), ntohl(th->ack_seq), ntohs(th->window), th->doff,
+			th->syn, th->ack, th->psh, th->rst, th->fin,
+			ntohs(iph->tot_len));
+	}
+
+	err = packet_send(ncb);
+	if (err)
+		return err;
+
+	ncb_put(ncb);
 	return 0;
 }
 
@@ -130,7 +173,7 @@ static int packet_process(int s)
 	pfd.events = POLLIN;
 	pfd.revents = 0;
 
-	if (poll(&pfd, 1, 1000) <= 0)
+	if (poll(&pfd, 1, 0) <= 0)
 		return -1;
 
 	if (!(pfd.revents & POLLIN))
@@ -179,10 +222,11 @@ int main(int argc, char *argv[])
 	//__u8 edst[] = {0x00, 0x10, 0x22, 0xFD, 0xC4, 0xD6}; /* 3com*/
 	//__u8 edst[] = {0x00, 0x0C, 0x6E, 0xAD, 0xBB, 0x8B}; /* kano */
 	//__u8 edst[] = {0x00, 0xE0, 0x18, 0xF5, 0x9D, 0xE6}; /* linoleum2 */
-	//__u8 edst[] = {0x00, 0x0E, 0x0C, 0x83, 0x87, 0xF0}; /* e1000 new */
-	__u8 edst[] = {0x00, 0x00, 0x21, 0x01, 0x95, 0xD1}; /* home lan */
+	__u8 edst[] = {0x00, 0x0E, 0x0C, 0x83, 0x87, 0xF0}; /* e1000 new */
+	//__u8 edst[] = {0x00, 0x00, 0x21, 0x01, 0x95, 0xD1}; /* home lan */
 	__u8 esrc[] = {0x00, 0x11, 0x09, 0x61, 0xEB, 0x0E};
 	struct nc_route rt;
+	char str[128];
 	
 	rt.src = num2ip(192,168,4,78);
 	rt.dst = num2ip(192,168,0,48);
@@ -250,6 +294,10 @@ int main(int argc, char *argv[])
 
 	signal(SIGTERM, term_signal);
 	signal(SIGINT, term_signal);
+	signal(SIGALRM, alarm_signal);
+	packet_timestamp = time(NULL);
+	gettimeofday(&tm1, NULL);
+	alarm(alarm_timeout);
 
 	unc.src = src;
 	unc.dst = dst;
@@ -268,19 +316,31 @@ int main(int argc, char *argv[])
 	while (!need_exit) {
 		static int sent, recv;
 
-		err = packet_process(packet_socket);
-		if (!err) {
+		packet_process(packet_socket);
+		err = netchannel_recv(nc, buf, sizeof(buf));
+		if (err >= 0)
+			recv++;
+#if 1
+		//while (!need_exit)
+		{
+			snprintf(str, sizeof(str), "Counter: sent: %u, recv: %u.\n", sent, recv);
+			if (netchannel_send(nc, str, sizeof(str)) >= 0) {
+				bytes_sent += sizeof(str);
+				sent++;
+			} else
+				error += sizeof(str);
+
+		}
+#endif
+#if 0
+		{
 			//__u8 str[] = "GET http://lcamtuf.coredump.cx/p0f-help/ HTTP/1.0\n\n";
 			__u8 str[] = "GET / HTTP/1.0\n\n";
-			//__u8 str[] = "GET http://www.opensolaris.org/os/ HTTP/1.0\n\n";
-			err = netchannel_recv(nc, buf, sizeof(buf));
-			if (err >= 0)
-				recv++;
-#if 0
+
 			if ((recv == 1) &&!sent && (netchannel_send(nc, str, sizeof(str)) >= 0))
 				sent = 1;
-#endif
 		}
+#endif
 	}
 
 	return 0;

@@ -83,14 +83,19 @@ struct nc_buff
 	} nh;
 
 	struct nc_route		*dst;
+
+	__u32			timestamp;
+
+	__u8			cb[32];
 };
 
 extern struct nc_buff *ncb_alloc(unsigned int size);
 extern void ncb_free(struct nc_buff *);
 
-extern int packet_ip_send(struct nc_buff *ncb);
-extern int packet_eth_send(struct nc_buff *ncb);
-extern int packet_send(struct nc_buff *ncb);
+extern int transmit_data(struct nc_buff *ncb);
+int ip_build_header(struct nc_buff *ncb);
+int ip_send_data(struct nc_buff *ncb);
+int eth_build_header(struct nc_buff *ncb);
 
 void packet_dump(__u8 *data, unsigned int size);
 
@@ -187,6 +192,7 @@ static inline struct nc_buff *ncb_dequeue(struct nc_buff_head *list)
 		prev->next   = next;
 		result->next = result->prev = NULL;
 	}
+
 	return result;
 }
 
@@ -381,5 +387,7 @@ extern void route_put(struct nc_route *);
 extern int route_add(struct nc_route *rt);
 extern void route_fini(void);
 extern int route_init(void);
+
+extern unsigned int packet_timestamp;
 
 #endif /* __SYS_H */
