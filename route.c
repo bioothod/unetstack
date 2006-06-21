@@ -50,16 +50,27 @@ struct nc_route *route_get(__u32 dst, __u32 src)
 				break;
 		}
 	}
+	
+	if (rt) {
+		rt->refcnt++;
 #if 0
-	if (rt)
 		ulog("%u.%u.%u.%u -> %u.%u.%u.%u, proto: %u, header_size: %u.\n",
 			NIPQUAD(rt->src), NIPQUAD(rt->dst), rt->proto, rt->header_size);
 #endif
+	}
 	return rt;
 }
 
 void route_put(struct nc_route *rt)
 {
+	if (rt->refcnt <= 0)
+		ulog("%s: BUG: refcnt: %d.\n", __func__, rt->refcnt);
+	else if (--rt->refcnt == 0) {
+#if 0
+		ulog("%u.%u.%u.%u -> %u.%u.%u.%u, proto: %u, header_size: %u.\n",
+			NIPQUAD(rt->src), NIPQUAD(rt->dst), rt->proto, rt->header_size);
+#endif
+	}
 }
 
 int route_init(void)

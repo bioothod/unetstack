@@ -41,6 +41,8 @@ typedef unsigned int __u32;
 #define ulog(f, a...) uloga(f, ##a)
 #define ulog_err(f, a...) ulog(f ": %s [%d].\n", ##a, strerror(errno), errno)
 
+#define ulog_info(f, a...) fprintf(stderr, f, ##a)
+
 struct nc_buff_head {
 	/* These two members must be first. */
 	struct nc_buff	*next;
@@ -57,6 +59,7 @@ struct nc_route
 	__u8			edst[ETH_ALEN], esrc[ETH_ALEN];
 	__u8			proto;
 	unsigned int		header_size;
+	int			refcnt;
 };
 
 struct nc_buff
