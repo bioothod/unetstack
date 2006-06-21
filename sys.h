@@ -43,6 +43,8 @@ typedef unsigned int __u32;
 
 #define ulog_info(f, a...) fprintf(stderr, f, ##a)
 
+#define MAX_HEADER_SIZE	200
+
 struct nc_buff_head {
 	/* These two members must be first. */
 	struct nc_buff	*next;

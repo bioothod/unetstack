@@ -268,7 +268,7 @@ int main(int argc, char *argv[])
 	if (err)
 		return err;
 	
-	rt.header_size = sizeof(struct tcphdr) + sizeof(struct iphdr) + sizeof(struct ether_header) + 20;
+	rt.header_size = MAX_HEADER_SIZE;
 	rt.src = src;
 	rt.dst = dst;
 	rt.proto = proto;
