@@ -54,7 +54,7 @@ static int udp_connect(struct common_protocol *proto,
 	return 0;
 }
 
-static int udp_build_header(struct udp_protocol *up, struct nc_buff *ncb)
+static int udp_build_header(struct udp_protocol *up __attribute__ ((unused)), struct nc_buff *ncb)
 {
 	struct udphdr *uh;
 	struct pseudohdr *p;
