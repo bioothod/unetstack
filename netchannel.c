@@ -161,7 +161,7 @@ static inline void netchannel_dump_info_unc(struct unetchannel *unc, char *prefi
 	dport = ntohs(unc->dport);
 	sport = ntohs(unc->sport);
 
-	ulog("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, hit: %llu, err: %d.\n",
+	ulog_info("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, hit: %llu, err: %d.\n",
 		prefix, NIPQUAD(src), sport, NIPQUAD(dst), dport, 
 		unc->proto, hit, err);
 }

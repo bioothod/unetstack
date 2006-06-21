@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/poll.h>
+#include <sys/time.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,7 +105,7 @@ static int packet_send(struct nc_buff *ncb)
 int transmit_data(struct nc_buff *ncb)
 {
 	int err;
-
+#ifdef DEBUG
 	if (ncb->dst->proto == IPPROTO_TCP) {
 		struct iphdr *iph = ncb->nh.iph;
 		struct tcphdr *th = ncb->h.th;
@@ -116,7 +117,7 @@ int transmit_data(struct nc_buff *ncb)
 			th->syn, th->ack, th->psh, th->rst, th->fin,
 			ntohs(iph->tot_len));
 	}
-
+#endif
 	err = packet_send(ncb);
 	if (err)
 		return err;
@@ -149,16 +150,6 @@ static int packet_create_socket(void)
 	}
 
 	return s;
-}
-
-void packet_dump(__u8 *data, unsigned int size)
-{
-	unsigned int i;
-
-	ulog("dump: size: %u: ", size);
-	for (i=0; i<min_t(unsigned int, size, 128); ++i)
-		uloga("%02x ", data[i]);
-	uloga("\n");
 }
 
 static int packet_process(int s)
@@ -204,7 +195,7 @@ static unsigned int packet_convert_addr(char *addr_str, unsigned int *addr)
 
 static void usage(const char *p)
 {
-	ulog("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -h\n", p);
+	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -h\n", p);
 }
 
 int main(int argc, char *argv[])
