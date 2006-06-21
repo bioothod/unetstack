@@ -3,8 +3,12 @@ KDIR	:= /home/s0mbre/aWork/git/linux-2.6/linux-2.6.net
 PWD	:= $(shell pwd)
 CC	:= gcc
 
-CFLAGS	:= -I$(KDIR)/include -W -Wall -DDEBUG -g
+CFLAGS	:= -I$(KDIR)/include -W -Wall -g -O3
 LDFLAGS := -lc
+
+ifdef DEBUG
+CFLAGS += -DDEBUG
+endif
 
 OBJS := tcp.o udp.o ip.o eth.o netchannel.o packet.o ncbuff.o route.o
 TARGETS	:= stack
