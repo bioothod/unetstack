@@ -108,8 +108,6 @@ struct tcp_protocol
 	__u32			snd_cwnd, snd_ssthresh, in_flight, cong;
 
 	__u32			qlen;
-
-	struct nc_buff		*combined_start;
 };
 
 struct state_machine
@@ -1204,121 +1202,84 @@ static int tcp_can_send(struct tcp_protocol *tp)
 	return can_send;
 }
 
-static int tcp_transmit_combined(struct tcp_protocol *tp)
-{
-	struct nc_buff *sncb, *ncb, *ncb_end;
-	int err = -EINVAL;
-	unsigned int left, total;
-	void *ptr;
-
-	if (!tp->combined_start)
-		goto err_out_exit;
-
-	sncb = ncb_alloc(tp->mss);
-	if (!sncb)
-		goto err_out_flush;
-
-	ncb_pull(sncb, MAX_HEADER_SIZE);
-
-	left = sncb->size - MAX_HEADER_SIZE;
-	total = 0;
-	ptr = sncb->head;
-
-	ulog("%s: start: %p.\n", __func__, tp->combined_start);
-	
-	ncb = ncb_end = tp->combined_start;
-	while ((ncb != (struct nc_buff *)&tp->retransmit_queue) && left) {
-		if (ncb->size > left)
-			break;
-
-		if (!sncb->nc) {
-			sncb->nc = ncb->nc;
-			sncb->dst = ncb->dst;
-			ncb->dst->refcnt++;
-		}
-		memcpy(ptr, ncb->head, ncb->size);
-		ptr += ncb->size;
-		left -= ncb->size;
-		total += ncb->size;
-
-		ulog("%s: ncb: %p, size: %u, left: %u, total: %u, next: %p, sncb: %p.\n", __func__, ncb, ncb->size, left, total, ncb->next, sncb);
-
-		ncb = ncb_end = ncb->next;
-	}
-
-	ulog("%s: total: %u, left: %u, sncb: %p.\n", __func__, total, left, sncb);
-
-	if (!total) {
-		err = 0;
-		goto err_out_free;
-	}
-	ncb_trim(sncb, total);
-	
-	err = tcp_build_header(tp, sncb, TCP_FLAG_PSH|TCP_FLAG_ACK, 0);
-	if (err)
-		goto err_out_free;
-
-	ncb_insert(sncb, ncb, ncb->next, &tp->retransmit_queue);
-	tp->qlen += sncb->size;
-
-	ulog("%s: removing start: %p, last: %p, sncb: %p.\n", __func__, tp->combined_start, ncb_end, sncb);
-	ncb = tp->combined_start;
-	while (ncb != (struct nc_buff *)&tp->retransmit_queue) {
-		struct nc_buff *next = ncb->next;
-		ulog("%s: remove: ncb: %p, size: %u, end: %p, qlen: %u.\n", __func__, ncb, ncb->size, ncb_end, tp->qlen);
-		tp->qlen -= ncb->size;
-		ncb_unlink(ncb, &tp->retransmit_queue);
-		ncb_put(ncb);
-		if (ncb == ncb_end)
-			break;
-		ncb = next;
-	}
-	ulog("%s: transmit, end: %p, head: %p, sncb: %p, dst: %p, ncb: %p.\n", 
-			__func__, ncb, &tp->retransmit_queue, sncb, sncb->dst, ncb);
-	tp->combined_start = (ncb != (struct nc_buff *)&tp->retransmit_queue)?ncb:NULL;
-
-	err = transmit_data(sncb);
-	if (err)
-		goto err_out_free;
-	return total;
-
-err_out_free:
-	ncb_put(sncb);
-err_out_flush:
-	ncb = tp->combined_start;
-	while (ncb != (struct nc_buff *)&tp->retransmit_queue) {
-		err = transmit_data(ncb);
-		if (err)
-			break;
-		ncb = ncb->next;
-	}
-	tp->combined_start = (ncb != (struct nc_buff *)&tp->retransmit_queue)?ncb:NULL;
-err_out_exit:
-	return err;
-}
-
-static int tcp_process_out(struct netchannel *nc, void *buf, unsigned int size)
+static int tcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int data_size)
 {
 	struct tcp_protocol *tp = tcp_convert(nc->proto);
 	struct nc_buff *ncb;
 	struct nc_route *dst;
+	int err = 0;
+	unsigned int copy, total = 0;
+	
+	dst = route_get(nc->unc.dst, nc->unc.src);
+	if (!dst) {
+		err = -ENODEV;
+		goto out_exit;
+	}
+
+	while (data_size) {
+		ncb = ncb_peek_tail(&tp->retransmit_queue);
+		if (!ncb || !ncb_tail_len(ncb)) {
+			ncb = ncb_alloc(tp->mss);
+			if (!ncb) {
+				err = -ENOMEM;
+				goto out;
+			}
+
+			ncb->dst = dst;
+			ncb->nc = nc;
+
+			ncb_pull(ncb, dst->header_size);
+			ncb->tail = ncb->head;
+			ncb->size = 0;
+			
+			ncb_get(ncb);
+			ncb_queue_tail(&tp->retransmit_queue, ncb);
+			tp->qlen += ncb_tail_len(ncb);
+			ulog("%s: queued ncb: %p, size: %u, tail_len: %u.\n", __func__, ncb, ncb->size, ncb_tail_len(ncb));
+		} 
+
+		copy = min_t(unsigned int, ncb_tail_len(ncb), data_size);
+		memcpy(ncb->tail, buf, copy);
+		ncb->tail += copy;
+		ncb->size += copy;
+		buf += copy;
+		data_size -= copy;
+		total += copy;
+		
+		ulog("%s: ncb: %p, copy: %u, total: %u, data_size: %u, ncb_size: %u, tail_len: %u.\n", 
+				__func__, ncb, copy, total, data_size, ncb->size, ncb_tail_len(ncb));
+		if (!ncb_tail_len(ncb)) {
+			err = tcp_send_data(tp, ncb, TCP_FLAG_PSH|TCP_FLAG_ACK, 0);
+			if (err)
+				goto out;
+		}
+	}
+	err = total;
+
+out:
+	route_put(dst);
+out_exit:
+	return err;
+}
+
+static int tcp_transmit_data(struct netchannel *nc, void *buf, unsigned int data_size)
+{
+	struct tcp_protocol *tp = tcp_convert(nc->proto);
+	struct nc_buff *ncb;
+	struct nc_route *dst;
+	unsigned int size;
 	int err;
-
-	if (tp->state != TCP_ESTABLISHED)
-		return -1;
-#if 0
-	if (tp->qlen + size > tcp_max_qlen)
-		return -ENOMEM;
-#endif	
-
-	if (!tcp_can_send(tp))
-		return -EAGAIN;
 
 	dst = route_get(nc->unc.dst, nc->unc.src);
 	if (!dst)
 		return -ENODEV;
 
-	ncb = ncb_alloc(size + dst->header_size);
+	if (tcp_in_slow_start(tp) || data_size + dst->header_size > tp->mss)
+		size = data_size + dst->header_size;
+	else
+		size = tp->mss;
+	
+	ncb = ncb_alloc(size);
 	if (!ncb) {
 		err = -ENOMEM;
 		goto err_out_put;
@@ -1330,37 +1291,46 @@ static int tcp_process_out(struct netchannel *nc, void *buf, unsigned int size)
 
 	ncb_pull(ncb, dst->header_size);
 
-	memcpy(ncb->head, buf, size);
+	memcpy(ncb->head, buf, data_size);
 
 	ncb_get(ncb);
 	ncb_queue_tail(&tp->retransmit_queue, ncb);
 	tp->qlen += ncb->size;
 	ulog("%s: queued: ncb: %p, size: %u, qlen: %u.\n", __func__, ncb, ncb->size, tp->qlen);
 
-	if (tcp_in_slow_start(tp) || tp->mss < MAX_HEADER_SIZE*2 || 1)
-		err = tcp_send_data(tp, ncb, TCP_FLAG_PSH|TCP_FLAG_ACK, 0);
-	else {
-		if (!tp->combined_start)
-			tp->combined_start = ncb;
-
-		if (tp->qlen > tp->mss)
-			err = tcp_transmit_combined(tp);
-		else 
-			err = 0;
-	}
-
+	err = tcp_send_data(tp, ncb, TCP_FLAG_PSH|TCP_FLAG_ACK, 0);
 	if (err)
 		goto err_out_free;
 	
 	route_put(dst);
 
-	return size;
+	return data_size;
 
 err_out_free:
 	ncb_put(ncb);
 err_out_put:
 	route_put(dst);
 	return err;
+}
+
+static int tcp_process_out(struct netchannel *nc, void *buf, unsigned int data_size)
+{
+	struct tcp_protocol *tp = tcp_convert(nc->proto);
+
+	if (tp->state != TCP_ESTABLISHED)
+		return -1;
+#if 0
+	if (tp->qlen + data_size > tcp_max_qlen)
+		return -ENOMEM;
+#endif	
+
+	if (!tcp_can_send(tp))
+		return -EAGAIN;
+
+	if (tcp_in_slow_start(tp) || data_size + MAX_HEADER_SIZE > tp->mss)
+		return tcp_transmit_data(nc, buf, data_size);
+	else
+		return tcp_transmit_combined(nc, buf, data_size);
 }
 
 static int tcp_destroy(struct netchannel *nc)

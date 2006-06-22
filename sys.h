@@ -43,7 +43,7 @@ typedef unsigned int __u32;
 
 #define ulog_info(f, a...) fprintf(stderr, f, ##a)
 
-#define MAX_HEADER_SIZE	200
+#define MAX_HEADER_SIZE	100
 
 struct nc_buff_head {
 	/* These two members must be first. */
@@ -64,12 +64,20 @@ struct nc_route
 	int			refcnt;
 };
 
+/* ncb pointers: 
+ * |------|------------------------|-----|
+ * data  head                    tail   end
+ *
+ * [data, head] - headers
+ * [head, tail] - data
+ */
+
 struct nc_buff
 {
 	struct nc_buff		*next;
 	struct nc_buff		*prev;
 
-	void			*data, *head, *tail;
+	void			*data, *head, *tail, *end;
 	unsigned int		size, total_size;
 
 	int			refcnt;
@@ -217,6 +225,19 @@ static inline struct nc_buff *ncb_peek(struct nc_buff_head *list_)
 	if (list == (struct nc_buff *)list_)
 		list = NULL;
 	return list;
+}
+
+static inline struct nc_buff *ncb_peek_tail(struct nc_buff_head *list_)
+{
+	struct nc_buff *list = ((struct nc_buff *)list_)->prev;
+	if (list == (struct nc_buff *)list_)
+		list = NULL;
+	return list;
+}
+
+static inline unsigned int ncb_tail_len(struct nc_buff *ncb)
+{
+	return ncb->end - ncb->tail;
 }
 
 static inline void ncb_unlink(struct nc_buff *ncb, struct nc_buff_head *head)

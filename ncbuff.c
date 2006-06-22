@@ -46,7 +46,7 @@ struct nc_buff *ncb_alloc(unsigned int size)
 
 	ncb->timestamp = packet_timestamp;
 	ncb->refcnt = 1;
-	ncb->tail = ncb->head + ncb->size;
+	ncb->tail = ncb->end = ncb->head + ncb->size;
 
 	return ncb;
 }
