@@ -65,7 +65,7 @@ static void alarm_signal(int signo __attribute__ ((unused)))
 		speed = ((double)bytes_sent)*1000000.0/((double)diff*1024.0*1024.0);
 		espeed = ((double)error)*1000000.0/((double)diff*1024.0*1024.0);
 	}
-	fprintf(stderr, "%s: time: %f, bytes_sent: %lu, speed: %f [%f], errors: %lu.\n", 
+	printf("%s: time: %f, bytes_sent: %lu, speed: %f [%f], errors: %lu.\n", 
 			__func__, ((double)diff)/1000000.0, bytes_sent, speed, speed+espeed, error);
 	alarm(alarm_timeout);
 }
@@ -200,7 +200,7 @@ static void usage(const char *p)
 
 int main(int argc, char *argv[])
 {
-	int err, ch;
+	int err, ch, send_num;
 	struct unetchannel unc;
 	struct netchannel *nc;
 	char *saddr, *daddr;
@@ -231,9 +231,13 @@ int main(int argc, char *argv[])
 	sport = rand();
 	dport = 1025;
 	proto = IPPROTO_TCP;
+	send_num = 1;
 
 	while ((ch = getopt(argc, argv, "s:d:S:D:hp:")) != -1) {
 		switch (ch) {
+			case 'n':
+				send_num = atoi(optarg);
+				break;
 			case 'p':
 				proto = atoi(optarg);
 				break;
@@ -306,6 +310,7 @@ int main(int argc, char *argv[])
 	ulog("Connected.\n");
 	while (!need_exit) {
 		static int sent, recv;
+		int i;
 
 		packet_process(packet_socket);
 		err = netchannel_recv(nc, buf, sizeof(buf));
@@ -313,13 +318,18 @@ int main(int argc, char *argv[])
 			recv++;
 #if 1
 		//while (!need_exit)
+		for (i=0; i<send_num; ++i)
 		{
 			snprintf(str, sizeof(str), "Counter: sent: %u, recv: %u.\n", sent, recv);
-			if (netchannel_send(nc, str, sizeof(str)) >= 0) {
+			err = netchannel_send(nc, str, sizeof(str));
+			ulog("%s: send: err: %d.\n", __func__, err);
+			if (err > 0) {
 				bytes_sent += sizeof(str);
 				sent++;
-			} else
+			} else {
 				error += sizeof(str);
+				break;
+			}
 
 		}
 #endif
