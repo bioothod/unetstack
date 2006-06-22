@@ -46,10 +46,9 @@ static inline struct udp_protocol *udp_convert(struct common_protocol *proto)
 	return (struct udp_protocol *)proto;
 }
 
-static int udp_connect(struct common_protocol *proto,
-		struct netchannel *nc __attribute__ ((unused)))
+static int udp_connect(struct netchannel *nc)
 {
-	struct udp_protocol *up = udp_convert(proto);
+	struct udp_protocol *up = udp_convert(nc->proto);
 	ncb_queue_init(&up->receive_queue);
 	return 0;
 }
@@ -80,51 +79,68 @@ static int udp_build_header(struct udp_protocol *up __attribute__ ((unused)), st
 	return ip_build_header(ncb);
 }
 
-static int udp_process_in(struct common_protocol *proto, struct nc_buff *ncb)
+static int udp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 {
-	struct udp_protocol *up = udp_convert(proto);
+	struct nc_buff *ncb;
+	unsigned int read;
 
-	if (!ncb)
-		return 0;
-	
-	ncb->h.raw = ncb_pull(ncb, sizeof(struct udphdr));
-	if (!ncb->h.raw)
-		return -EINVAL;
-
-	ncb_queue_tail(&up->receive_queue, ncb);
-	return ncb->size;
-}
-
-static int udp_process_out(struct common_protocol *proto, struct nc_buff *ncb)
-{
-	int err;
-	struct udp_protocol *up = udp_convert(proto);
-
-	err = udp_build_header(up, ncb);
-	if (err)
-		return err;
-
-	return transmit_data(ncb);
-}
-
-static int udp_read_data(struct common_protocol *proto, __u8 *buf, unsigned int size)
-{
-	struct udp_protocol *up = udp_convert(proto);
-	struct nc_buff *ncb = ncb_peek(&up->receive_queue);
-	unsigned int sz;
-	
+	ncb = ncb_dequeue(&nc->recv_queue);
 	if (!ncb)
 		return -EAGAIN;
 
-	ncb_unlink(ncb, &up->receive_queue);
-	sz = min_t(unsigned int, size, ncb->size);
-	memcpy(buf, ncb->head, sz);
+	ulog("%s: size: %u.\n", __func__, ncb->size);
+	read = min_t(unsigned int, size, ncb->size);
+	memcpy(buf, ncb->head, read);
 	ncb_put(ncb);
-	return sz;
+
+	return read;
 }
 
-static int udp_destroy(struct common_protocol *proto __attribute__ ((unused)),
-		struct netchannel *nc __attribute__ ((unused)))
+static int udp_process_out(struct netchannel *nc, void *buf, unsigned int size)
+{
+	struct nc_buff *ncb;
+	int err;
+	struct udp_protocol *up = udp_convert(nc->proto);
+	struct nc_route *dst;
+
+	dst = route_get(nc->unc.dst, nc->unc.src);
+	if (!dst)
+		return -ENODEV;
+
+	ncb = ncb_alloc(size + dst->header_size);
+	if (!ncb) {
+		err = -ENOMEM;
+		goto err_out_put;
+	}
+
+	ncb->dst = dst;
+	ncb->dst->proto = nc->unc.proto;
+	ncb->nc = nc;
+
+	ncb_pull(ncb, dst->header_size);
+
+	memcpy(ncb->head, buf, size);
+
+	err = udp_build_header(up, ncb);
+	if (err)
+		goto err_out_free;
+
+	err = transmit_data(ncb);
+	if (err)
+		goto err_out_free;
+
+	route_put(dst);
+
+	return size;
+
+err_out_free:
+	ncb_put(ncb);
+err_out_put:
+	route_put(dst);
+	return err;
+}
+
+static int udp_destroy(struct netchannel *nc __attribute__ ((unused)))
 {
 	return 0;
 }
@@ -134,6 +150,5 @@ struct common_protocol udp_protocol = {
 	.connect	= &udp_connect,
 	.process_in	= &udp_process_in,
 	.process_out	= &udp_process_out,
-	.read_data	= &udp_read_data,
 	.destroy	= &udp_destroy,
 };

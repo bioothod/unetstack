@@ -213,81 +213,15 @@ void netchannel_remove(struct netchannel *nc)
 
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 {
-	struct nc_buff *ncb;
-	int err;
-	struct nc_route *dst;
-
-	dst = route_get(nc->unc.dst, nc->unc.src);
-	if (!dst)
-		return -ENODEV;
-
-	ncb = ncb_alloc(size + dst->header_size);
-	if (!ncb) {
-		err = -ENOMEM;
-		goto err_out_put;
-	}
-
-	ncb->dst = dst;
-	ncb->dst->proto = nc->unc.proto;
-	ncb->nc = nc;
-
-	ncb_pull(ncb, dst->header_size);
-
-	memcpy(ncb->head, buf, size);
-
-	err = nc->proto->process_out(nc->proto, ncb);
-	if (err < 0)
-		goto err_out_free;
-
-	route_put(dst);
-
-	return 0;
-
-err_out_free:
-	ncb_put(ncb);
-err_out_put:
-	route_put(dst);
-	return err;
+	return nc->proto->process_out(nc, buf, size);
 }
 
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 {
-	struct nc_buff *ncb;
-	int err = 0;
-	unsigned int read = 0;
-
-	while (size) {
-		ncb = ncb_dequeue(&nc->recv_queue);
-		if (!ncb) {
-			nc->proto->process_in(nc->proto, NULL);
-			break;
-		}
-		ncb->nc = nc;
-		err = nc->proto->process_in(nc->proto, ncb);
-
-		ulog("process_in: err: %d.\n", err);
-
-		if (err <= 0) {
-			ncb_put(ncb);
-			break;
-		}
-
-		err = nc->proto->read_data(nc->proto, buf, size);
-
-		if (err > 0) {
-			write(1, buf, err);
-			size -= err;
-			buf += err;
-			read += err;
-		}
-
-		ncb_put(ncb);
-	}
-
-	return read;
+	return nc->proto->process_in(nc, buf, size);
 }
 
 int netchannel_connect(struct netchannel *nc)
 {
-	return nc->proto->connect(nc->proto, nc);
+	return nc->proto->connect(nc);
 }

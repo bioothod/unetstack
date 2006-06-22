@@ -311,11 +311,11 @@ struct common_protocol
 {
 	unsigned int		size;
 
-	int 			(*connect)(struct common_protocol *, struct netchannel *);
-	int 			(*process_in)(struct common_protocol *, struct nc_buff *);
-	int 			(*process_out)(struct common_protocol *, struct nc_buff *);
-	int 			(*destroy)(struct common_protocol *, struct netchannel *);
-	int 			(*read_data)(struct common_protocol *, __u8 *, unsigned int);
+	int 			(*connect)(struct netchannel *);
+	int 			(*destroy)(struct netchannel *);
+
+	int 			(*process_in)(struct netchannel *, void *, unsigned int);
+	int 			(*process_out)(struct netchannel *, void *, unsigned int);
 };
 
 struct unetchannel 
