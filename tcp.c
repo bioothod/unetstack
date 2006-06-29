@@ -720,17 +720,6 @@ static int tcp_established(struct tcp_protocol *tp, struct nc_buff *ncb)
 			goto out;
 	}
 
-	if (!ncb->size) {
-		tcp_process_ack(tp, ncb);
-	} else {
-		ncb_queue_order(ncb, &tp->ofo_queue);
-
-		err = tcp_send_bit(tp, ncb->nc, TCP_FLAG_ACK);
-		if (err < 0)
-			goto out;
-
-	}
-
 	if (beforeeq(seq, tp->rcv_nxt) && aftereq(seq_end, tp->rcv_nxt)) {
 		tp->rcv_nxt = seq_end;
 		ncb_queue_check(tp, &tp->ofo_queue);
@@ -740,6 +729,17 @@ static int tcp_established(struct tcp_protocol *tp, struct nc_buff *ncb)
 		 */
 		err = 0;
 		goto out;
+	}
+
+	if (!ncb->size) {
+		tcp_process_ack(tp, ncb);
+	} else {
+		ncb_queue_order(ncb, &tp->ofo_queue);
+
+		err = tcp_send_bit(tp, ncb->nc, TCP_FLAG_ACK);
+		if (err < 0)
+			goto out;
+
 	}
 
 	if (before(tp->snd_wl1, seq) || ((tp->snd_wl1 == seq) && beforeeq(tp->snd_wl2, ack))) {
