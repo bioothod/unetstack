@@ -1129,7 +1129,7 @@ static int tcp_read_data(struct tcp_protocol *tp, __u8 *buf, unsigned int size)
 
 		tp->seq_read += sz;
 
-		if (aftereq(tp->seq_read, seq)) {
+		if (aftereq(tp->seq_read, seq_end)) {
 			ulog("Unlinking: ncb: seq: %u, seq_end: %u, seq_read: %u.\n",
 					seq, seq_end, tp->seq_read);
 
