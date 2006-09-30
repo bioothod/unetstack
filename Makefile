@@ -19,7 +19,6 @@ all: $(OBJS) $(TARGETS)
 stack: $(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) -o $@
 
-tcp.o:		tcp.c sys.h Makefile
 atcp.o:		atcp.c sys.h Makefile
 udp.o:		udp.c sys.h Makefile
 ip.o:		ip.c sys.h Makefile
