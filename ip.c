@@ -51,10 +51,10 @@ int ip_build_header(struct nc_buff *ncb)
 	iph->saddr = ncb->dst->src;
 	iph->daddr = ncb->dst->dst;
 	iph->check = 0;
-	iph->tos = 0;
-	iph->tot_len = htons(ncb->size);
+	iph->tos = 0x10;
+	iph->tot_len = htons(ncb->len);
 	iph->ttl = 64;
-	iph->id = 0;
+	iph->id = rand();
 	iph->frag_off = htons(0x4000);
 	iph->version = 4;
 	iph->ihl = 5;
@@ -89,10 +89,10 @@ int packet_ip_process(struct nc_buff *ncb)
 	ncb_trim(ncb, ntohs(iph->tot_len) - iph->ihl * 4);
 
 	unc.proto = iph->protocol;
-	unc.src = iph->daddr;
-	unc.dst = iph->saddr;
-	unc.sport = ((__u16 *)(iph + 1))[1];
-	unc.dport = ((__u16 *)(iph + 1))[0];
+	unc.laddr = iph->daddr;
+	unc.faddr = iph->saddr;
+	unc.lport = ((__u16 *)(iph + 1))[1];
+	unc.fport = ((__u16 *)(iph + 1))[0];
 
 	err = netchannel_queue(ncb, &unc);
 	return err;

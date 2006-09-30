@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 #include <net/ethernet.h>
 
@@ -33,7 +34,7 @@ typedef unsigned int __u32;
 
 #define PACKET_NAME	"packet"
 
-#ifdef DEBUG
+#ifdef UDEBUG
 #define uloga(f, a...) fprintf(stderr, f, ##a)
 #else
 #define uloga(f, a...)
@@ -64,6 +65,12 @@ struct nc_route
 	int			refcnt;
 };
 
+struct ncb_timeval
+{
+	__u32		off_sec;
+	__u32		off_usec;
+};
+
 /* ncb pointers: 
  * |------|------------------------|-----|
  * data  head                    tail   end
@@ -78,7 +85,7 @@ struct nc_buff
 	struct nc_buff		*prev;
 
 	void			*data, *head, *tail, *end;
-	unsigned int		size, total_size;
+	unsigned int		len, total_size;
 
 	int			refcnt;
 
@@ -97,7 +104,7 @@ struct nc_buff
 
 	struct nc_route		*dst;
 
-	__u32			timestamp;
+	struct ncb_timeval	tstamp;
 
 	__u8			cb[32];
 };
@@ -119,11 +126,11 @@ static inline void *ncb_push(struct nc_buff *ncb, unsigned int size)
 {
 	if (ncb->head < ncb->data + size) {
 		ulog("%s: head: %p, data: %p, size: %u [%u], req_size: %u.\n",
-				__func__, ncb->head, ncb->data, ncb->size, ncb->total_size, size);
+				__func__, ncb->head, ncb->data, ncb->len, ncb->total_size, size);
 		return NULL;
 	}
 	ncb->head -= size;
-	ncb->size += size;
+	ncb->len += size;
 	return ncb->head;
 }
 
@@ -132,23 +139,23 @@ static inline void *ncb_pull(struct nc_buff *ncb, unsigned int size)
 	void *head = ncb->head;
 	if (ncb->tail < ncb->head + size) {
 		ulog("%s: head: %p, data: %p, size: %u [%u], req_size: %u.\n",
-				__func__, ncb->head, ncb->data, ncb->size, ncb->total_size, size);
+				__func__, ncb->head, ncb->data, ncb->len, ncb->total_size, size);
 		return NULL;
 	}
 	ncb->head += size;
-	ncb->size -= size;
+	ncb->len -= size;
 	return head;
 }
 
 static inline void *ncb_trim(struct nc_buff *ncb, unsigned int size)
 {
-	if (size > ncb->size) {
+	if (size > ncb->len) {
 		ulog("%s: head: %p, data: %p, size: %u, req_size: %u.\n",
-				__func__, ncb->head, ncb->data, ncb->size, size);
+				__func__, ncb->head, ncb->data, ncb->len, size);
 		return NULL;
 	}
 	ncb->tail = ncb->head + size;
-	ncb->size = size;
+	ncb->len = size;
 	return ncb->head;
 }
 
@@ -156,6 +163,11 @@ static inline struct nc_buff *ncb_get(struct nc_buff *ncb)
 {
 	ncb->refcnt++;
 	return ncb;
+}
+
+static inline struct nc_buff *ncb_clone(struct nc_buff *ncb)
+{
+	return ncb_get(ncb);
 }
 
 static inline void ncb_put(struct nc_buff *ncb)
@@ -235,7 +247,7 @@ static inline struct nc_buff *ncb_peek_tail(struct nc_buff_head *list_)
 	return list;
 }
 
-static inline unsigned int ncb_tail_len(struct nc_buff *ncb)
+static inline unsigned int ncb_tailroom(struct nc_buff *ncb)
 {
 	return ncb->end - ncb->tail;
 }
@@ -248,6 +260,15 @@ static inline void ncb_unlink(struct nc_buff *ncb, struct nc_buff_head *head)
 	prev->next = next;
 	next->prev = prev;
 	head->qlen--;
+}
+
+static inline void ncb_timestamp(struct nc_buff *ncb)
+{
+	struct timeval tm;
+
+	gettimeofday(&tm, NULL);
+	ncb->tstamp.off_sec = tm.tv_sec;
+	ncb->tstamp.off_usec = tm.tv_usec;
 }
 
 static inline void netchannel_flush_list_head(struct nc_buff_head *list)
@@ -323,8 +344,8 @@ static inline void hlist_del(struct hlist_node *n)
 
 #define INIT_HLIST_HEAD(ptr) ((ptr)->first = NULL)
 
-extern struct common_protocol tcp_protocol;
-extern struct common_protocol udp_protocol;
+extern struct common_protocol atcp_common_protocol;
+extern struct common_protocol udp_common_protocol;
 
 struct netchannel;
 
@@ -332,7 +353,7 @@ struct common_protocol
 {
 	unsigned int		size;
 
-	int 			(*connect)(struct netchannel *);
+	int 			(*create)(struct netchannel *);
 	int 			(*destroy)(struct netchannel *);
 
 	int 			(*process_in)(struct netchannel *, void *, unsigned int);
@@ -341,9 +362,9 @@ struct common_protocol
 
 struct unetchannel 
 {
-	__u32			src, dst;
-	__u16			sport, dport;
-	__u8			proto;
+	__u32			laddr, faddr;
+	__u16			lport, fport;
+	__u8			proto, state;
 };
 
 struct netchannel
@@ -370,6 +391,7 @@ void netchannel_remove(struct netchannel *nc);
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_connect(struct netchannel *nc);
+int packet_process(unsigned int timeout);
 
 static inline __u16 in_csum(__u16 *addr, unsigned int len)
 {

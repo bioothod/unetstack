@@ -41,13 +41,11 @@
 #include <netinet/tcp.h>
 
 #include "sys.h"
+#include "stat.h"
 
 static int need_exit;
 static int packet_socket;
 static int alarm_timeout = 1;
-unsigned int packet_timestamp;
-static struct timeval tm1, tm2;
-static unsigned long bytes_sent, error;
 
 static void term_signal(int signo)
 {
@@ -56,17 +54,7 @@ static void term_signal(int signo)
 
 static void alarm_signal(int signo __attribute__ ((unused)))
 {
-	double diff, speed = 0.0, espeed = 0.0;
-
-	packet_timestamp = time(NULL);
-	gettimeofday(&tm2, NULL);
-	diff = (tm2.tv_sec - tm1.tv_sec)*1000000 + tm2.tv_usec - tm1.tv_usec;
-	if (diff != 0) {
-		speed = ((double)bytes_sent)*1000000.0/((double)diff*1024.0*1024.0);
-		espeed = ((double)error)*1000000.0/((double)diff*1024.0*1024.0);
-	}
-	printf("%s: time: %f, bytes_sent: %lu, speed: %f [%f], errors: %lu.\n", 
-			__func__, ((double)diff)/1000000.0, bytes_sent, speed, speed+espeed, error);
+	print_stat();
 	alarm(alarm_timeout);
 }
 
@@ -93,7 +81,7 @@ static int packet_send(struct nc_buff *ncb)
 	ll.sll_ifindex = 2;
 	memcpy(ll.sll_addr, ncb->dst->edst, ll.sll_halen);
 
-	err = sendto(pfd.fd, ncb->head, ncb->size, 0, (struct sockaddr *)&ll, sizeof(struct sockaddr_ll));
+	err = sendto(pfd.fd, ncb->head, ncb->len, 0, (struct sockaddr *)&ll, sizeof(struct sockaddr_ll));
 	if (err < 0) {
 		ulog_err("sendto");
 		return err;
@@ -105,7 +93,7 @@ static int packet_send(struct nc_buff *ncb)
 int transmit_data(struct nc_buff *ncb)
 {
 	int err;
-#ifdef DEBUG
+#ifdef UDEBUG
 	if (ncb->dst->proto == IPPROTO_TCP) {
 		struct iphdr *iph = ncb->nh.iph;
 		struct tcphdr *th = ncb->h.th;
@@ -152,7 +140,7 @@ static int packet_create_socket(void)
 	return s;
 }
 
-static int packet_process(int s)
+int packet_process(unsigned int timeout)
 {
 	unsigned char buf[4096];
 	int err;
@@ -160,17 +148,17 @@ static int packet_process(int s)
 	socklen_t from_len = sizeof(struct sockaddr_in);
 	struct pollfd pfd;
 
-	pfd.fd = s;
+	pfd.fd = packet_socket;
 	pfd.events = POLLIN;
 	pfd.revents = 0;
 
-	if (poll(&pfd, 1, 0) <= 0)
+	if (poll(&pfd, 1, timeout) <= 0)
 		return -1;
 
 	if (!(pfd.revents & POLLIN))
 		return -1;
 
-	err = recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
+	err = recvfrom(packet_socket, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
 	if (err < 0) {
 		ulog_err("recvfrom");
 		return err;
@@ -213,7 +201,7 @@ int main(int argc, char *argv[])
 	//__u8 edst[] = {0x00, 0x10, 0x22, 0xFD, 0xC4, 0xD6}; /* 3com*/
 	//__u8 edst[] = {0x00, 0x0C, 0x6E, 0xAD, 0xBB, 0x8B}; /* kano */
 	//__u8 edst[] = {0x00, 0xE0, 0x18, 0xF5, 0x9D, 0xE6}; /* linoleum2 */
-	__u8 edst[] = {0x00, 0x0E, 0x0C, 0x83, 0x87, 0xF0}; /* e1000 new */
+	__u8 edst[] = {0x00, 0x08, 0xC7, 0x2A, 0xD2, 0x63}; /* e1000 new */
 	//__u8 edst[] = {0x00, 0x00, 0x21, 0x01, 0x95, 0xD1}; /* home lan */
 	__u8 esrc[] = {0x00, 0x11, 0x09, 0x61, 0xEB, 0x0E};
 	struct nc_route rt;
@@ -233,7 +221,7 @@ int main(int argc, char *argv[])
 	proto = IPPROTO_TCP;
 	send_num = 1;
 
-	while ((ch = getopt(argc, argv, "s:d:S:D:hp:")) != -1) {
+	while ((ch = getopt(argc, argv, "n:s:d:S:D:hp:")) != -1) {
 		switch (ch) {
 			case 'n':
 				send_num = atoi(optarg);
@@ -290,49 +278,44 @@ int main(int argc, char *argv[])
 	signal(SIGTERM, term_signal);
 	signal(SIGINT, term_signal);
 	signal(SIGALRM, alarm_signal);
-	packet_timestamp = time(NULL);
-	gettimeofday(&tm1, NULL);
+	init_stat();
 	alarm(alarm_timeout);
 
-	unc.src = src;
-	unc.dst = dst;
-	unc.sport = htons(sport);
-	unc.dport = htons(dport);
+	unc.laddr = src;
+	unc.faddr = dst;
+	unc.lport = htons(sport);
+	unc.fport = htons(dport);
 	unc.proto = proto;
 	
 	nc = netchannel_create(&unc);
 	if (!nc)
 		return -1;
 	
-	err = netchannel_connect(nc);
-	if (err)
-		return -1;
 	ulog("Connected.\n");
 	while (!need_exit) {
 		static int sent, recv;
 		int i;
 
-		packet_process(packet_socket);
+		packet_process(100);
 		err = netchannel_recv(nc, buf, sizeof(buf));
 		if (err >= 0)
 			recv++;
-#if 1
-		//while (!need_exit)
 		for (i=0; i<send_num; ++i)
 		{
+			memset(str, 0xab, sizeof(str));
 			snprintf(str, sizeof(str), "Counter: sent: %u, recv: %u.\n", sent, recv);
 			err = netchannel_send(nc, str, sizeof(str));
 			ulog("%s: send: err: %d.\n", __func__, err);
 			if (err > 0) {
-				bytes_sent += sizeof(str);
-				sent++;
+				stat_written += sizeof(str);
+				stat_written_msg++;
 			} else {
-				error += sizeof(str);
+				if (err != -EAGAIN)
+					need_exit = 1;
 				break;
 			}
 
 		}
-#endif
 #if 0
 		{
 			//__u8 str[] = "GET http://lcamtuf.coredump.cx/p0f-help/ HTTP/1.0\n\n";

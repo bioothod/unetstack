@@ -35,7 +35,7 @@ struct nc_buff *ncb_alloc(unsigned int size)
 
 	memset(ncb, 0, sizeof(struct nc_buff));
 
-	ncb->size = ncb->total_size = size;
+	ncb->len = ncb->total_size = size;
 
 	ncb->data = ncb->head = malloc(size);
 	if (!ncb->data) {
@@ -44,9 +44,9 @@ struct nc_buff *ncb_alloc(unsigned int size)
 	}
 	memset(ncb->data, 0, ncb->total_size);
 
-	ncb->timestamp = packet_timestamp;
+	ncb_timestamp(ncb);
 	ncb->refcnt = 1;
-	ncb->tail = ncb->end = ncb->head + ncb->size;
+	ncb->tail = ncb->end = ncb->head + ncb->len;
 
 	return ncb;
 }

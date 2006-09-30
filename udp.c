@@ -62,20 +62,20 @@ static int udp_build_header(struct udp_protocol *up __attribute__ ((unused)), st
 	if (!uh)
 		return -ENOMEM;
 	
-	uh->source = ncb->nc->unc.sport;
-	uh->dest = ncb->nc->unc.dport;
-	uh->len = htons(ncb->size);
+	uh->source = ncb->nc->unc.lport;
+	uh->dest = ncb->nc->unc.fport;
+	uh->len = htons(ncb->len);
 	uh->check = 0;
 	
 	p = (struct pseudohdr *)(((__u8 *)uh) - sizeof(struct pseudohdr));
 	memset(p, 0, sizeof(*p));
 
-	p->saddr = ncb->nc->unc.src;
-	p->daddr = ncb->nc->unc.dst;
+	p->saddr = ncb->nc->unc.laddr;
+	p->daddr = ncb->nc->unc.faddr;
 	p->tp = IPPROTO_UDP;
-	p->len = htonl(ncb->size);
+	p->len = htonl(ncb->len);
 
-	uh->check = in_csum((__u16 *)p, sizeof(struct pseudohdr) + ncb->size);
+	uh->check = in_csum((__u16 *)p, sizeof(struct pseudohdr) + ncb->len);
 	return ip_build_header(ncb);
 }
 
@@ -88,8 +88,8 @@ static int udp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 	if (!ncb)
 		return -EAGAIN;
 
-	ulog("%s: size: %u.\n", __func__, ncb->size);
-	read = min_t(unsigned int, size, ncb->size);
+	ulog("%s: size: %u.\n", __func__, ncb->len);
+	read = min_t(unsigned int, size, ncb->len);
 	memcpy(buf, ncb->head, read);
 	ncb_put(ncb);
 
@@ -103,7 +103,7 @@ static int udp_process_out(struct netchannel *nc, void *buf, unsigned int size)
 	struct udp_protocol *up = udp_convert(nc->proto);
 	struct nc_route *dst;
 
-	dst = route_get(nc->unc.dst, nc->unc.src);
+	dst = route_get(nc->unc.faddr, nc->unc.laddr);
 	if (!dst)
 		return -ENODEV;
 
@@ -145,9 +145,9 @@ static int udp_destroy(struct netchannel *nc __attribute__ ((unused)))
 	return 0;
 }
 
-struct common_protocol udp_protocol = {
+struct common_protocol udp_common_protocol = {
 	.size		= sizeof(struct udp_protocol),
-	.connect	= &udp_connect,
+	.create		= &udp_connect,
 	.process_in	= &udp_process_in,
 	.process_out	= &udp_process_out,
 	.destroy	= &udp_destroy,

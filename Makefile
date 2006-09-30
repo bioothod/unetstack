@@ -7,10 +7,10 @@ CFLAGS	:= -I$(KDIR)/include -W -Wall -g -O3
 LDFLAGS := -lc
 
 ifdef DEBUG
-CFLAGS += -DDEBUG
+CFLAGS += -DUDEBUG
 endif
 
-OBJS := tcp.o udp.o ip.o eth.o netchannel.o packet.o ncbuff.o route.o
+OBJS := atcp.o udp.o ip.o eth.o netchannel.o packet.o ncbuff.o route.o stat.o
 TARGETS	:= stack
 
 all: $(OBJS) $(TARGETS)
@@ -20,6 +20,7 @@ stack: $(OBJS)
 	$(CC) $(LDFLAGS) $(OBJS) -o $@
 
 tcp.o:		tcp.c sys.h Makefile
+atcp.o:		atcp.c sys.h Makefile
 udp.o:		udp.c sys.h Makefile
 ip.o:		ip.c sys.h Makefile
 netchannel.o:	netchannel.c sys.h Makefile

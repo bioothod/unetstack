@@ -40,14 +40,14 @@ static unsigned int netchannel_hash_order = 8;
 
 static inline unsigned int netchannel_hash(struct unetchannel *unc)
 {
-	unsigned int h = (unc->dst ^ unc->dport) ^ (unc->src ^ unc->sport);
+	unsigned int h = (unc->faddr ^ unc->fport) ^ (unc->laddr ^ unc->lport);
 	h ^= h >> 16;
 	h ^= h >> 8;
 	h ^= unc->proto;
 #if 0
 	ulog("%s: %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u.\n",
-			__func__, NIPQUAD(unc->src), ntohs(unc->sport),
-			NIPQUAD(unc->dst), ntohs(unc->dport), unc->proto);
+			__func__, NIPQUAD(unc->laddr), ntohs(unc->lport),
+			NIPQUAD(unc->faddr), ntohs(unc->fport), unc->proto);
 #endif
 	return h & ((1 << 2*netchannel_hash_order) - 1);
 }
@@ -69,8 +69,8 @@ struct netchannel_cache_head *netchannel_bucket(struct unetchannel *unc)
 
 static inline int netchannel_hash_equal_full(struct unetchannel *unc1, struct unetchannel *unc2)
 {
-	return (unc1->dport == unc2->dport) && (unc1->dst == unc2->dst) &&
-				(unc1->sport == unc2->sport) && (unc1->src == unc2->src) && 
+	return (unc1->fport == unc2->fport) && (unc1->faddr == unc2->faddr) &&
+				(unc1->lport == unc2->lport) && (unc1->laddr == unc2->laddr) && 
 				(unc1->proto == unc2->proto);
 }
 
@@ -102,9 +102,10 @@ int netchannel_queue(struct nc_buff *ncb, struct unetchannel *unc)
 		return -ENODEV;
 
 	ulog("\n+ %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : size: %u, ncb: %p.\n",
-			NIPQUAD(unc->src), ntohs(unc->sport),
-			NIPQUAD(unc->dst), ntohs(unc->dport), ncb->size, ncb);
+			NIPQUAD(unc->laddr), ntohs(unc->fport),
+			NIPQUAD(unc->faddr), ntohs(unc->fport), ncb->len, ncb);
 
+	ncb->nc = nc;
 	ncb_queue_tail(&nc->recv_queue, ncb);
 	nc->hit++;
 	return 0;
@@ -153,16 +154,13 @@ void netchannel_fini(void)
 
 static inline void netchannel_dump_info_unc(struct unetchannel *unc, char *prefix, unsigned long long hit, int err)
 {
-	__u32 src, dst;
-	__u16 sport, dport;
+	__u16 lport, fport;
 
-	dst = unc->dst;
-	src = unc->src;
-	dport = ntohs(unc->dport);
-	sport = ntohs(unc->sport);
+	fport = ntohs(unc->fport);
+	lport = ntohs(unc->lport);
 
 	ulog_info("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, hit: %llu, err: %d.\n",
-		prefix, NIPQUAD(src), sport, NIPQUAD(dst), dport, 
+		prefix, NIPQUAD(unc->laddr), lport, NIPQUAD(unc->faddr), fport, 
 		unc->proto, hit, err);
 }
 
@@ -174,10 +172,10 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 
 	switch (unc->proto) {
 		case IPPROTO_UDP:
-			proto = &udp_protocol;
+			proto = &udp_common_protocol;
 			break;
 		case IPPROTO_TCP:
-			proto = &tcp_protocol;
+			proto = &atcp_common_protocol;
 			break;
 		default:
 			return NULL;
@@ -198,10 +196,20 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 	memcpy(&nc->unc, unc, sizeof(struct unetchannel));
 
 	hlist_add_head(&nc->node, &bucket->head);
-
+	
+	netchannel_dump_info_unc(unc, "creating", 0, 0);
+	
+	if (nc->proto->create(nc))
+		goto err_out_free;
+	
 	netchannel_dump_info_unc(unc, "create", 0, 0);
 
 	return nc;
+
+err_out_free:
+	hlist_del(&nc->node);
+	free(nc);
+	return NULL;
 }
 
 void netchannel_remove(struct netchannel *nc)
@@ -219,9 +227,4 @@ int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 {
 	return nc->proto->process_in(nc, buf, size);
-}
-
-int netchannel_connect(struct netchannel *nc)
-{
-	return nc->proto->connect(nc);
 }
