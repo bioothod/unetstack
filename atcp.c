@@ -102,7 +102,8 @@ struct atcp_protocol
 	__u8			rwscale, swscale;
 	__u16			mss;
 	__u32			tsval, tsecr;
-	__u32			ack_sent, ack_missed, sent_without_reading, ack_missed_bytes;
+	__u32			ack_sent, ack_missed, ack_missed_bytes;
+	int			sent_without_reading;
 
 	struct nc_buff_head	ofo_queue;
 
@@ -110,7 +111,7 @@ struct atcp_protocol
 	struct nc_buff_head	retransmit_queue;
 	struct ncb_timeval	first_packet_ts;
 	__u32			retransmit_timeout;
-	__u32			dupack_seq, dupack_num;
+	__u32			dupack_seq, dupack_num, last_retransmit;
 
 	__u32			seq_read;
 
@@ -459,10 +460,13 @@ static int atcp_in_slow_start(struct atcp_protocol *tp)
 
 static int atcp_can_send(struct atcp_protocol *tp, struct nc_buff *ncb)
 {
-	int can_send = tp->snd_cwnd > tp->in_flight;
+	int can_send = 1;
+
+	can_send = tp->snd_cwnd > tp->in_flight;
 
 	if (can_send)
 		can_send = tp->in_flight_bytes < tp_rwin(tp);
+
 	if (can_send && ncb) {
 		__u32 end_seq = TCP_NCB_CB(ncb)->end_seq;
 
@@ -579,7 +583,7 @@ static void atcp_check_retransmit_queue(struct atcp_protocol *tp, __u32 ack)
 			ulog("%s: ack: %u, snd_una: %u, removing: seq: %u, end_seq: %u, ts: %u.%u, in_flight: %u [%u], dec: %u.\n", 
 					__func__, ack, tp->snd_una, seq, end_seq, n->tstamp.off_sec, n->tstamp.off_usec, 
 					tp->in_flight, tp->in_flight_bytes, size);
-			tp->dupack_seq = TCP_NCB_CB(ncb)->seq;
+			tp->dupack_seq = tp->last_retransmit = TCP_NCB_CB(ncb)->seq;
 
 			ncb_put(n);
 			n = ncb;
@@ -751,26 +755,38 @@ static int atcp_fast_retransmit(struct atcp_protocol *tp)
 {
 	__u32 seq, end_seq, ack;
 	struct nc_buff *ncb = ncb_peek(&tp->retransmit_queue);
+	int err;
 
 	if (!ncb)
 		return -EINVAL;
+
+	while (ncb && (TCP_NCB_CB(ncb)->seq != tp->last_retransmit)) {
+		ncb = ncb->next;
+		if (ncb == (struct nc_buff *)&tp->retransmit_queue)
+			ncb = NULL;
+	}
+
+	if (!ncb) {
+		ulog("%s: ncb: NULL, last_retransmit: %u.\n", __func__, tp->last_retransmit);
+		return -EINVAL;
+	}
 
 	seq = TCP_NCB_CB(ncb)->seq;
 	end_seq = TCP_NCB_CB(ncb)->end_seq;
 	ack = TCP_NCB_CB(ncb)->ack_seq;
 
-	ulog("%s: seq: %u, end_seq: %u, ack: %u, dupack_seq: %u.\n", __func__, seq, end_seq, ack, tp->dupack_seq);
-
-	if (seq != tp->dupack_seq) {
-		ulog("%s: a bug: seq: %u, end_seq: %u, ack: %u, dupack_seq: %u.\n", __func__, seq, end_seq, ack, tp->dupack_seq);
-		return -EINVAL;
-	}
-
 	ncb = ncb_clone(ncb);
 	if (!ncb)
 		return -ENOMEM;
 
-	return transmit_data(ncb);
+	err = transmit_data(ncb);
+	if (err)
+		return err;
+
+	tp->last_retransmit = end_seq;
+	ulog("%s: seq: %u, end_seq: %u, ack: %u, dupack_seq: %u, last_retransmit: %u.\n", 
+			__func__, seq, end_seq, ack, tp->dupack_seq, tp->last_retransmit);
+	return 0;
 }
 
 static void atcp_congestion(struct atcp_protocol *tp)
@@ -781,7 +797,7 @@ static void atcp_congestion(struct atcp_protocol *tp)
 		tp->max_rwin = tp_rwin(tp);
 		return;
 	}
-	
+
 	tp->dupack_num++;
 
 	if (tp->snd_cwnd > 1) {
@@ -790,6 +806,8 @@ static void atcp_congestion(struct atcp_protocol *tp)
 		tp->prev_update_ratio = atcp_def_prev_update_ratio;
 	}
 
+	atcp_fast_retransmit(tp);
+
 	if (tp->dupack_num >= 3) {
 		tp->snd_ssthresh = max_t(unsigned int, tp->mss * 2, min_wind/2);
 		if (tp->snd_cwnd > 1) {
@@ -797,15 +815,12 @@ static void atcp_congestion(struct atcp_protocol *tp)
 			tp->snd_cwnd_bytes = tp->mss * tp->snd_cwnd;
 			tp->prev_update_ratio = atcp_def_prev_update_ratio;
 		}
-		
-		atcp_fast_retransmit(tp);
 
 		ulog("%s: dupack_seq: %u, dupack_num: %u, cwnd: %u [%u], ssthresh: %u, in_flight: %u [%u], ss: %d, rwin: %u, swin: %u.\n", 
 			__func__, tp->dupack_seq, tp->dupack_num, tp->snd_cwnd, tp->snd_cwnd*tp->mss, tp->snd_ssthresh,
 			tp->in_flight, tp->in_flight_bytes, atcp_in_slow_start(tp),
 			tp_rwin(tp), tp_swin(tp));
 		tp->dupack_num = 0;
-		tp->snd_cwnd++;
 	}
 }
 
@@ -832,10 +847,15 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 	if (th->rst)
 		goto out;
 
-	ulog("%s: seq: %u, end_seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u, cwnd: %u in_flight: %u [%u].\n",
+	ulog("%s: seq: %u, end_seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u, cwnd: %u in_flight: %u [%u], rwin: %u.\n",
 			__func__, seq, end_seq, ack, 
 			tp->snd_una, tp->snd_nxt, tp_swin(tp), 
-			tp->rcv_nxt, rwin, tp->snd_cwnd, tp->in_flight, tp->in_flight_bytes);
+			tp->rcv_nxt, rwin, tp->snd_cwnd, tp->in_flight, tp->in_flight_bytes, tp_rwin(tp));
+	ulog("R ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_wnd: %u, cwnd: %u in_flight: %u [%u], ss: %d, dnum: %u, can_send: %u.\n",
+			ack, tp->snd_una, tp->snd_nxt, tp_swin(tp), 
+			rwin, 
+			tp->snd_cwnd, tp->in_flight, tp->in_flight_bytes, 
+			atcp_in_slow_start(tp), tp->dupack_num, atcp_can_send(tp, NULL));
 
 	if (!ncb->len && beforeeq(ack, tp->snd_una)) {
 		ulog("%s: duplicate ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
@@ -1130,12 +1150,12 @@ static int atcp_parse_options(struct atcp_protocol *tp, struct nc_buff *ncb)
 
 static struct nc_buff *atcp_process_in_ncb(struct netchannel *nc, unsigned int *init_len);
 
-static int atcp_out_read(struct netchannel *nc, unsigned int tm __attribute__ ((unused)))
+static int atcp_out_read(struct netchannel *nc, unsigned int tm)
 {
 	struct nc_buff *ncb;
 	unsigned int init_len;
 
-	packet_process(0);
+	packet_process(tm);
 
 	ncb = atcp_process_in_ncb(nc, &init_len);
 	if (ncb) {
@@ -1153,7 +1173,7 @@ static inline int atcp_retransmit_time(struct atcp_protocol *tp)
 
 static void atcp_retransmit(struct atcp_protocol *tp)
 {
-	struct nc_buff *first = ncb_peek(&tp->retransmit_queue), *ncb;
+	struct nc_buff *first = ncb_peek(&tp->retransmit_queue), *ncb, *nncb;
 	int retransmitted = 0;
 
 	if (tp->state == TCP_CLOSE) {
@@ -1165,33 +1185,36 @@ static void atcp_retransmit(struct atcp_protocol *tp)
 		goto out;
 
 	ulog("%s at %u.\n", __func__, atcp_packet_timestamp());
-	fprintf(stderr, "%s: swin: %u, rwin: %u, cwnd: %u, in_flight: %u [%u], ssthresh: %u, qlen: %u, ss: %d, can_send: %d.\n", 
+	ulog("%s: swin: %u, rwin: %u, cwnd: %u, in_flight: %u [%u], ssthresh: %u, qlen: %u, ss: %d, can_send: %d.\n", 
 			__func__, tp_swin(tp), tp_rwin(tp), tp->snd_cwnd, tp->in_flight, tp->in_flight_bytes, 
 			tp->snd_ssthresh, tp->qlen, atcp_in_slow_start(tp), atcp_can_send(tp, NULL));
-
+#if 1
 	tp->in_flight = 0;
 	tp->in_flight_bytes = 0;
+#endif
 	ncb = first;
 
 	do {
 		__u32 seq = TCP_NCB_CB(ncb)->seq;
 		__u32 end_seq = TCP_NCB_CB(ncb)->end_seq;
-		
+
 		if (before(atcp_packet_timestamp(), ncb->tstamp.off_sec + tp->retransmit_timeout))
 			break;
-
+#if 1
 		if (!atcp_can_send(tp, ncb))
 			break;
-
+#endif
 		ulog("%s: ncb: %p, seq: %u, end_seq: %u, ts: %u.%u, time: %u.\n", 
 			__func__, ncb, seq, end_seq, ncb->tstamp.off_sec, ncb->tstamp.off_usec, atcp_packet_timestamp());
 
 		if (!seq && !end_seq && ncb->len)
 			break;
 
-		__atcp_try_to_transmit(tp, ncb);
-		ncb->tstamp.off_sec = atcp_packet_timestamp();
-		retransmitted++;
+		nncb = ncb_clone(ncb);
+		if (nncb && (transmit_data(nncb) == 0)) {
+			ncb->tstamp.off_sec = atcp_packet_timestamp();
+			retransmitted++;
+		}
 
 		atcp_out_read(tp->nc, 0);
 		if (first != ncb_peek(&tp->retransmit_queue))
@@ -1199,7 +1222,7 @@ static void atcp_retransmit(struct atcp_protocol *tp)
 	} while ((ncb = ncb->next) != (struct nc_buff *)&tp->retransmit_queue);
 out:
 	if (retransmitted) {
-		fprintf(stderr, "%s: retransmitted: %d, ss: %d, cwnd: %u, in_flight: %u, rwin: %u, in_flight_bytes: %u, ssthresh: %u, swin: %u.\n", 
+		ulog("%s: retransmitted: %d, ss: %d, cwnd: %u, in_flight: %u, rwin: %u, in_flight_bytes: %u, ssthresh: %u, swin: %u.\n", 
 				__func__, retransmitted, atcp_in_slow_start(tp), tp->snd_cwnd, tp->in_flight,
 				tp_rwin(tp), tp->in_flight_bytes, tp->snd_ssthresh, tp_swin(tp));
 	}
@@ -1531,13 +1554,15 @@ static int ncb_add_data(struct nc_buff *ncb, void *buf, unsigned int size)
 	return 0;
 }
 
-static int atcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int data_size)
+static int atcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int data_size, int *sent)
 {
 	struct atcp_protocol *tp = atcp_convert(nc->proto);
 	struct nc_buff *ncb;
 	int err = 0;
 	unsigned int copy, total = 0;
 	struct nc_route *dst;
+
+	*sent = 0;
 
 	dst = netchannel_route_get(nc);
 	if (!dst) {
@@ -1595,10 +1620,14 @@ static int atcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int
 			
 			ncb_queue_tail(&tp->retransmit_queue, ncb);
 			tp->last_ncb = NULL;
+			*sent = 1;
 
 			err = atcp_try_to_transmit(tp, ncb);
-			if (err && err != -EAGAIN)
-				goto out;
+			if (err) {
+				if (err != -EAGAIN)
+					goto out;
+				break;
+			}
 		}
 	}
 	err = total;
@@ -1659,8 +1688,7 @@ static int atcp_transmit_data(struct netchannel *nc, void *buf, unsigned int dat
 		if (err && err != -EAGAIN) {
 			sent = err;
 			break;
-		} else
-			atcp_out_read(nc, 0);
+		}
 
 		buf += size;
 		data_size -= size;
@@ -1676,7 +1704,7 @@ err_out_put:
 static int atcp_process_out(struct netchannel *nc, void *buf, unsigned int data_size)
 {
 	struct atcp_protocol *tp = atcp_convert(nc->proto);
-	int ret = 0;
+	int ret = 0, sent = 1;
 
 	if (tp->state == TCP_CLOSE)
 		return -ECONNRESET;
@@ -1691,22 +1719,21 @@ static int atcp_process_out(struct netchannel *nc, void *buf, unsigned int data_
 			goto out_read;
 		}
 #endif
-		if (atcp_in_slow_start(tp) || data_size + MAX_HEADER_SIZE >= tp->mss)
+		if (atcp_in_slow_start(tp) || data_size + MAX_HEADER_SIZE >= tp->mss) {
 			ret = atcp_transmit_data(nc, buf, data_size);
-		else
-			ret = atcp_transmit_combined(nc, buf, data_size);
+			atcp_out_read(nc, 0);
+		} else {
+			ret = atcp_transmit_combined(nc, buf, data_size, &sent);
+		}
 	}
 
 out_read:
-	if (++tp->sent_without_reading >= 3) {
+	if ((sent && ++tp->sent_without_reading >= 2) || ret != (signed)data_size) {
 		unsigned int tm = 1000;
-		
-		do {
-			if ((tp->state == TCP_ESTABLISHED) && atcp_can_send(tp, NULL))
-				tm = 0;
-			ulog("%s: sent_without_reading: %u, state: %u.\n", __func__, tp->sent_without_reading, tp->state);
-		} while (tp->sent_without_reading-- > 0 && atcp_out_read(nc, tm));
 
+		if ((tp->state == TCP_ESTABLISHED) && atcp_can_send(tp, NULL))
+			tm = 1000;
+		atcp_out_read(nc, tm);
 		tp->sent_without_reading = 0;
 	}
 	return ret;

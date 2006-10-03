@@ -47,6 +47,9 @@ static int need_exit;
 static int packet_socket;
 static int alarm_timeout = 1;
 
+/* Maximum number of not related to netchannel packets to read from packet socket until return */
+static int packet_max_read_num = 50;
+
 static void term_signal(int signo)
 {
 	need_exit = signo;
@@ -93,7 +96,7 @@ static int packet_send(struct nc_buff *ncb)
 int transmit_data(struct nc_buff *ncb)
 {
 	int err;
-#ifdef UDEBUG
+#if defined UDEBUG
 	if (ncb->dst->proto == IPPROTO_TCP) {
 		struct iphdr *iph = ncb->nh.iph;
 		struct tcphdr *th = ncb->h.th;
@@ -143,28 +146,32 @@ static int packet_create_socket(void)
 int packet_process(unsigned int timeout)
 {
 	unsigned char buf[4096];
-	int err;
+	int err, i;
 	struct sockaddr_in from;
 	socklen_t from_len = sizeof(struct sockaddr_in);
 	struct pollfd pfd;
 
-	pfd.fd = packet_socket;
-	pfd.events = POLLIN;
-	pfd.revents = 0;
+	for (i=0; i<packet_max_read_num; ++i) {
+		pfd.fd = packet_socket;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
 
-	if (poll(&pfd, 1, timeout) <= 0)
-		return -1;
+		err = poll(&pfd, 1, timeout);
 
-	if (!(pfd.revents & POLLIN))
-		return -1;
+		if (pfd.revents & POLLIN) {
+			err = recvfrom(packet_socket, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
+			if (err < 0) {
+				ulog_err("recvfrom");
+				return err;
+			}
 
-	err = recvfrom(packet_socket, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
-	if (err < 0) {
-		ulog_err("recvfrom");
-		return err;
+			err = packet_eth_process(buf, err);
+			if (!err)
+				break;
+		}
 	}
 
-	return packet_eth_process(buf, err);
+	return err;
 }
 
 static unsigned int packet_convert_addr(char *addr_str, unsigned int *addr)
@@ -295,11 +302,14 @@ int main(int argc, char *argv[])
 	while (!need_exit) {
 		static int sent, recv;
 		int i;
-
+#if 1
 		packet_process(100);
 		err = netchannel_recv(nc, buf, sizeof(buf));
-		if (err >= 0)
+		if (err > 0) {
 			recv++;
+			write(2, buf, err);
+		}
+#endif
 		for (i=0; i<send_num; ++i)
 		{
 			memset(str, 0xab, sizeof(str));
@@ -307,8 +317,9 @@ int main(int argc, char *argv[])
 			err = netchannel_send(nc, str, sizeof(str));
 			ulog("%s: send: err: %d.\n", __func__, err);
 			if (err > 0) {
-				stat_written += sizeof(str);
+				stat_written += err;
 				stat_written_msg++;
+				last_fd = nc->hit;
 			} else {
 				if (err != -EAGAIN)
 					need_exit = 1;
