@@ -36,8 +36,6 @@
 
 #include "sys.h"
 
-typedef signed int __s32;
-
 struct pseudohdr
 {
 	__u32		saddr, daddr;
@@ -61,11 +59,6 @@ enum {
 	TCP_CLOSING
 };
 #endif
-
-enum atcp_init_state {
-	NETCHANNEL_ATCP_CONNECT = 0,
-	NETCHANNEL_ATCP_LISTEN,
-};
 
 #define TCP_MAX_WSCALE	14
 static __u8 atcp_offer_wscale = 8;
@@ -1155,7 +1148,7 @@ static int atcp_out_read(struct netchannel *nc, unsigned int tm)
 	struct nc_buff *ncb;
 	unsigned int init_len;
 
-	packet_process(tm);
+	packet_eth_process(nc);
 
 	ncb = atcp_process_in_ncb(nc, &init_len);
 	if (ncb) {
@@ -1529,7 +1522,7 @@ static int atcp_create(struct netchannel *nc)
 			return err;
 
 		for (i=0; i<100; ++i) {
-			err = packet_process(1000);
+			err = packet_eth_process(nc);
 			if (!err)
 				break;
 		}

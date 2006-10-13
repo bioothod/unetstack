@@ -26,11 +26,11 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
-#include <net/ethernet.h>
+#include <linux/types.h>
+#include <linux/unistd.h>
+#include <linux/netchannel.h>
 
-typedef unsigned char __u8;
-typedef unsigned short __u16;
-typedef unsigned int __u32;
+#include <net/ethernet.h>
 
 #define PACKET_NAME	"packet"
 
@@ -45,6 +45,11 @@ typedef unsigned int __u32;
 #define ulog_info(f, a...) fprintf(stderr, f, ##a)
 
 #define MAX_HEADER_SIZE	100
+
+enum atcp_init_state {
+	NETCHANNEL_ATCP_CONNECT = 0,
+	NETCHANNEL_ATCP_LISTEN,
+};
 
 struct nc_buff_head {
 	/* These two members must be first. */
@@ -120,7 +125,7 @@ int eth_build_header(struct nc_buff *ncb);
 void packet_dump(__u8 *data, unsigned int size);
 
 int packet_ip_process(struct nc_buff *ncb);
-int packet_eth_process(void *data, unsigned int size);
+int packet_eth_process(struct netchannel *nc);
 
 static inline void *ncb_push(struct nc_buff *ncb, unsigned int size)
 {
@@ -279,16 +284,6 @@ static inline void netchannel_flush_list_head(struct nc_buff_head *list)
 		ncb_put(ncb);
 }
 
-struct hlist_node;
-
-struct hlist_head {
-	struct hlist_node *first;
-};
-
-struct hlist_node {
-	struct hlist_node *next, **pprev;
-};
-
 #define NIPQUAD(addr) \
 	((unsigned char *)&addr)[0], \
 	((unsigned char *)&addr)[1], \
@@ -299,50 +294,6 @@ struct hlist_node {
 	({ type __x = (x); type __y = (y); __x < __y ? __x: __y; })
 #define max_t(type,x,y) \
 	({ type __x = (x); type __y = (y); __x > __y ? __x: __y; })
-
-#undef offsetof
-#ifdef __compiler_offsetof
-#define offsetof(TYPE,MEMBER) __compiler_offsetof(TYPE,MEMBER)
-#else
-#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
-#endif
-	
-#define container_of(ptr, type, member) ({			\
-        const typeof( ((type *)0)->member ) *__mptr = (ptr);	\
-        (type *)( (char *)__mptr - offsetof(type,member) );})
-
-#define hlist_entry(ptr, type, member) container_of(ptr,type,member)
-
-#define hlist_for_each_entry(tpos, pos, head, member)		 \
-	for (pos = (head)->first;					 \
-	     pos && ({ tpos = hlist_entry(pos, typeof(*tpos), member); 1;}); \
-	     pos = pos->next)
-
-static inline void hlist_add_head(struct hlist_node *n, struct hlist_head *h)
-{
-	struct hlist_node *first = h->first;
-	n->next = first;
-	if (first)
-		first->pprev = &n->next;
-	h->first = n;
-	n->pprev = &h->first;
-}
-
-#define LIST_POISON1  ((void *) 0x00100100)
-#define LIST_POISON2  ((void *) 0x00200200)
-
-static inline void hlist_del(struct hlist_node *n)
-{
-	struct hlist_node *next = n->next;
-	struct hlist_node **pprev = n->pprev;
-	*pprev = next;
-	if (next)
-		next->pprev = pprev;
-	n->next = LIST_POISON1;
-	n->pprev = LIST_POISON2;
-}
-
-#define INIT_HLIST_HEAD(ptr) ((ptr)->first = NULL)
 
 extern struct common_protocol atcp_common_protocol;
 extern struct common_protocol udp_common_protocol;
@@ -360,38 +311,31 @@ struct common_protocol
 	int 			(*process_out)(struct netchannel *, void *, unsigned int);
 };
 
-struct unetchannel 
-{
-	__u32			laddr, faddr;
-	__u16			lport, fport;
-	__u8			proto, state;
-};
-
 struct netchannel
 {
-	struct hlist_node	node;
 	struct nc_buff_head 	recv_queue;
 	struct unetchannel	unc;
 
 	unsigned long long	hit;
 
-	struct common_protocol	*proto;
+	int			fd;
+
+	struct common_protocol	*proto;	/* Must be the last member in the structure */
 };
 
-struct netchannel_cache_head
-{
-	struct hlist_head	head;
-};
-
-int netchannel_queue(struct nc_buff *ncb, struct unetchannel *unc);
-int netchannel_init(void);
-void netchannel_fini(void);
 struct netchannel *netchannel_create(struct unetchannel *unc);
-void netchannel_remove(struct netchannel *nc);
+int netchannel_remove(struct netchannel *nc);
+int netchannel_bind(struct netchannel *nc);
+
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size);
-int netchannel_connect(struct netchannel *nc);
-int packet_process(unsigned int timeout);
+int netchannel_send_raw(struct nc_buff *ncb);
+
+void netchannel_setup_unc(struct unetchannel *unc,
+		unsigned int laddr, unsigned short lport,
+		unsigned int faddr, unsigned short fport,
+		unsigned int proto, unsigned int state,
+		unsigned int timeout);
 
 static inline __u16 in_csum(__u16 *addr, unsigned int len)
 {
@@ -435,7 +379,5 @@ extern void route_put(struct nc_route *);
 extern int route_add(struct nc_route *rt);
 extern void route_fini(void);
 extern int route_init(void);
-
-extern unsigned int packet_timestamp;
 
 #endif /* __SYS_H */

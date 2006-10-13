@@ -51,26 +51,41 @@ int eth_build_header(struct nc_buff *ncb)
 	return 0;
 }
 
-int packet_eth_process(void *data, unsigned int size)
+int packet_eth_process(struct netchannel *nc)
 {
 	struct nc_buff *ncb;
 	struct ether_header *eth;
-	int err = -ENOMEM;
+	int err;
 
-	ncb = ncb_alloc(size);
+	ncb = ncb_alloc(4096);
 	if (!ncb)
 		return -ENOMEM;
 
-	memcpy(ncb->head, data, size);
+	err = read(nc->fd, ncb->head, ncb->len);
+	if (err < 0) {
+		return err;
+	}
+	if (err == 0)
+		return -EAGAIN;
 
+	ncb_trim(ncb, err);
+#if 0
 	eth = ncb_pull(ncb, sizeof(struct ether_header));
 	if (!eth)
 		goto err_out_free;
+
+	ulog("%s: %02x.%02x.%02x.%02x.%02x.%02x -> %02x.%02x.%02x.%02x.%02x.%02x, proto: %04x.\n",
+			__func__,
+			eth->ether_shost[0], eth->ether_shost[1], eth->ether_shost[2], eth->ether_shost[3], eth->ether_shost[4], eth->ether_shost[5], 
+			eth->ether_dhost[0], eth->ether_dhost[1], eth->ether_dhost[2], eth->ether_dhost[3], eth->ether_dhost[4], eth->ether_dhost[5], 
+			ntohs(eth->ether_type));
 
 	if (ntohs(eth->ether_type) != ETH_P_IP) {
 		err = -1;
 		goto err_out_free;
 	}
+#endif
+	ncb->nc = nc;
 
 	err = packet_ip_process(ncb);
 	if (err)

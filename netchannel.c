@@ -19,204 +19,151 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include <sys/resource.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <sys/socket.h>
-#include <sys/poll.h>
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <errno.h>
-#include <unistd.h>
+#include <string.h>
 #include <netdb.h>
+#include <signal.h>
 
-#include <netinet/tcp.h>
+#include <netinet/in.h>
 #include <netinet/ip.h>
+#include <arpa/inet.h>
 
 #include "sys.h"
 
-static struct netchannel_cache_head **netchannel_hash_table;
-static unsigned int netchannel_hash_order = 8;
+_syscall1(int, netchannel_control, void *, arg1);
 
-static inline unsigned int netchannel_hash(struct unetchannel *unc)
+static inline void netchannel_dump(struct unetchannel *unc, char *prefix, int err, unsigned int len)
 {
-	unsigned int h = (unc->faddr ^ unc->fport) ^ (unc->laddr ^ unc->lport);
-	h ^= h >> 16;
-	h ^= h >> 8;
-	h ^= unc->proto;
-#if 0
-	ulog("%s: %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u.\n",
-			__func__, NIPQUAD(unc->laddr), ntohs(unc->lport),
-			NIPQUAD(unc->faddr), ntohs(unc->fport), unc->proto);
-#endif
-	return h & ((1 << 2*netchannel_hash_order) - 1);
-}
+	if (err)
+		ulog_err("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, len: %u, copy: %u, state: %u, err: %d",
+				prefix, NIPQUAD(unc->laddr), ntohs(unc->lport), NIPQUAD(unc->faddr), ntohs(unc->fport),	
+				unc->proto, len, unc->copy, unc->state, err);
+	else {
+		ulog("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, len: %u, copy: %u, state: %u, err: %d.\n",
+				prefix, NIPQUAD(unc->laddr), ntohs(unc->lport), NIPQUAD(unc->faddr), ntohs(unc->fport),	
+				unc->proto, len, unc->copy, unc->state, err);
 
-static inline void netchannel_convert_hash(unsigned int hash, unsigned int *col, unsigned int *row)
-{
-	*row = hash & ((1 << netchannel_hash_order) - 1);
-	*col = (hash >> netchannel_hash_order) & ((1 << netchannel_hash_order) - 1);
-}
-
-struct netchannel_cache_head *netchannel_bucket(struct unetchannel *unc)
-{
-	unsigned int hash = netchannel_hash(unc);
-	unsigned int col, row;
-
-	netchannel_convert_hash(hash, &col, &row);
-	return &netchannel_hash_table[col][row];
-}
-
-static inline int netchannel_hash_equal_full(struct unetchannel *unc1, struct unetchannel *unc2)
-{
-	return (unc1->fport == unc2->fport) && (unc1->faddr == unc2->faddr) &&
-				(unc1->lport == unc2->lport) && (unc1->laddr == unc2->laddr) && 
-				(unc1->proto == unc2->proto);
-}
-
-static struct netchannel *netchannel_check_full(struct unetchannel *unc, struct netchannel_cache_head *bucket)
-{
-	struct netchannel *nc;
-	struct hlist_node *node;
-	int found = 0;
-
-	hlist_for_each_entry(nc, node, &bucket->head, node) {
-		if (netchannel_hash_equal_full(&nc->unc, unc)) {
-			found = 1;
-			break;
-		}
 	}
-
-	return (found)?nc:NULL;
 }
 
-int netchannel_queue(struct nc_buff *ncb, struct unetchannel *unc)
+int netchannel_remove(struct netchannel *nc)
 {
-	struct netchannel *nc;
-	struct netchannel_cache_head *bucket = netchannel_bucket(unc);
+	struct unetchannel_control ctl;
+	int err;
 
-	if (!bucket)
-		return -ENODEV;
-	nc = netchannel_check_full(unc, bucket);
-	if (!nc)
-		return -ENODEV;
+	memset(&ctl, 0, sizeof(struct unetchannel_control));
 
-	ulog("\n+ %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : size: %u, ncb: %p.\n",
-			NIPQUAD(unc->laddr), ntohs(unc->fport),
-			NIPQUAD(unc->faddr), ntohs(unc->fport), ncb->len, ncb);
+	memcpy(&ctl.unc, &nc->unc, sizeof(struct unetchannel));
 
-	ncb->nc = nc;
-	ncb_queue_tail(&nc->recv_queue, ncb);
-	nc->hit++;
-	return 0;
-}
+	ctl.cmd = NETCHANNEL_REMOVE;
 
-int netchannel_init(void)
-{
-	unsigned int i, j, num = (1 << netchannel_hash_order);
-
-	netchannel_hash_table = malloc(num * sizeof(void *));
-	if (!netchannel_hash_table)
-		return -ENOMEM;
-
-	for (i=0; i<num; ++i) {
-		struct netchannel_cache_head *l;
-
-		l = malloc(num * sizeof(struct netchannel_cache_head));
-		if (!l)
-			break;
-
-		for (j=0; j<num; ++j)
-			INIT_HLIST_HEAD(&l[j].head);
-
-		netchannel_hash_table[i] = l;
-	}
-
-	if (i != num) {
-		num = i;
-		for (i=0; i<num; ++i)
-			free(netchannel_hash_table[i]);
-		return -ENOMEM;
-	}
-
-	return 0;
-}
-
-void netchannel_fini(void)
-{
-	unsigned int i, num = (1 << netchannel_hash_order);
-
-	for (i=0; i<num; ++i)
-		free(netchannel_hash_table[i]);
-
-	free(netchannel_hash_table);
-}
-
-static inline void netchannel_dump_info_unc(struct unetchannel *unc, char *prefix, unsigned long long hit, int err)
-{
-	__u16 lport, fport;
-
-	fport = ntohs(unc->fport);
-	lport = ntohs(unc->lport);
-
-	ulog_info("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, hit: %llu, err: %d.\n",
-		prefix, NIPQUAD(unc->laddr), lport, NIPQUAD(unc->faddr), fport, 
-		unc->proto, hit, err);
+	err = netchannel_control(&ctl);
+	
+	netchannel_dump(&ctl.unc, "remove", err, 0);
+	return err;
 }
 
 struct netchannel *netchannel_create(struct unetchannel *unc)
 {
+	struct unetchannel_control ctl;
+	int err;
+	struct common_protocol *proto;
 	struct netchannel *nc;
-	struct netchannel_cache_head *bucket;
-	struct common_protocol *proto = NULL;
 
-	switch (unc->proto) {
-		case IPPROTO_UDP:
-			proto = &udp_common_protocol;
-			break;
-		case IPPROTO_TCP:
-			proto = &atcp_common_protocol;
-			break;
-		default:
-			return NULL;
-	}
-
-	bucket = netchannel_bucket(unc);
-	if (netchannel_check_full(unc, bucket))
+	if (unc->proto == IPPROTO_TCP)
+		proto = &atcp_common_protocol;
+	else if (unc->proto == IPPROTO_UDP)
+		proto = &udp_common_protocol;
+	else
 		return NULL;
 
 	nc = malloc(sizeof(struct netchannel) + proto->size);
 	if (!nc)
 		return NULL;
 
-	nc->proto = (struct common_protocol *)(nc + 1);
-	memcpy(nc->proto, proto, sizeof(struct common_protocol));
-
+	memset(nc, 0, sizeof(struct netchannel) + proto->size);
 	ncb_queue_init(&nc->recv_queue);
+
+	nc->proto = (struct common_protocol *)(nc + 1);
+
+	memcpy(nc->proto, proto, sizeof(struct common_protocol));
 	memcpy(&nc->unc, unc, sizeof(struct unetchannel));
 
-	hlist_add_head(&nc->node, &bucket->head);
-	
-	netchannel_dump_info_unc(unc, "creating", 0, 0);
-	
-	if (nc->proto->create(nc))
-		goto err_out_free;
-	
-	netchannel_dump_info_unc(unc, "create", 0, 0);
+	memset(&ctl, 0, sizeof(struct unetchannel_control));
+	memcpy(&ctl.unc, unc, sizeof(struct unetchannel));
 
+	ctl.cmd = NETCHANNEL_CREATE;
+	err = netchannel_control(&ctl);
+	if (err < 0 && errno == EEXIST)
+		err = 0;
+	else if (err > 0) {
+		nc->fd = err;
+		err = nc->proto->create(nc);
+	}
+	
+	if (err) {
+		free(nc);
+		nc = NULL;
+	}
+
+	netchannel_dump(&ctl.unc, "create", err, 0);
 	return nc;
-
-err_out_free:
-	hlist_del(&nc->node);
-	free(nc);
-	return NULL;
 }
 
-void netchannel_remove(struct netchannel *nc)
+int netchannel_bind(struct netchannel *nc)
 {
-	netchannel_dump_info_unc(&nc->unc, "remove", nc->hit, 0);
-	hlist_del(&nc->node);
-	free(nc);
+	struct unetchannel_control ctl;
+	int err;
+
+	memset(&ctl, 0, sizeof(struct unetchannel_control));
+	memcpy(&ctl.unc, &nc->unc, sizeof(struct unetchannel));
+
+	ctl.cmd = NETCHANNEL_BIND;
+
+	err = netchannel_control(&ctl);
+	if (err && errno == EEXIST)
+		err = 0;
+
+	if (!err)
+		nc->fd = ctl.fd;
+	
+	netchannel_dump(&ctl.unc, "bind", err, 0);
+	return ctl.fd;
+}
+
+int netchannel_send_raw(struct nc_buff *ncb)
+{
+	unsigned char buf[4096];
+	struct unetchannel_control *ctl = (struct unetchannel_control *)buf;
+	struct iphdr *iph = ncb->nh.iph;
+	int err;
+
+	if (ncb->len > sizeof(buf) - sizeof(struct unetchannel_control))
+		return -EINVAL;
+
+	memset(buf, 0, sizeof(buf));
+
+	ctl->cmd = NETCHANNEL_SEND;
+	ctl->fd = ncb->nc->fd;
+	ctl->len = ncb->len;
+	ctl->header_len = iph->ihl * 4;
+	ctl->timeout = ncb->nc->unc.init_stat_work;
+
+	memcpy(&ctl->unc, &ncb->nc->unc, sizeof(struct unetchannel));
+
+	memcpy(&buf[sizeof(struct unetchannel_control)], ncb->head, ncb->len);
+
+	err = netchannel_control(ctl);
+	ulog("%s: len: %u, header_len: %u, err: %d.\n", __func__, ctl->len, ctl->header_len, err);
+	return err;
 }
 
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
@@ -227,4 +174,21 @@ int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 {
 	return nc->proto->process_in(nc, buf, size);
+}
+
+void netchannel_setup_unc(struct unetchannel *unc,
+		unsigned int laddr, unsigned short lport,
+		unsigned int faddr, unsigned short fport,
+		unsigned int proto, unsigned int state,
+		unsigned int timeout)
+{
+	unc->memory_limit_order = 31;
+	unc->faddr = faddr;
+	unc->laddr = laddr;
+	unc->fport = htons(fport);
+	unc->lport = htons(lport);
+	unc->proto = proto;
+	unc->state = state;
+	unc->init_stat_work = timeout;
+	unc->copy = NETCHANNEL_COPY_USER;
 }

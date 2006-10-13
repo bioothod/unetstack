@@ -61,7 +61,7 @@ int ip_build_header(struct nc_buff *ncb)
 	iph->protocol = ncb->dst->proto;
 
 	iph->check = in_csum((__u16 *)iph, iph->ihl*4);
-
+	return 0;
 	return eth_build_header(ncb);
 }
 
@@ -78,8 +78,6 @@ int ip_send_data(struct nc_buff *ncb)
 int packet_ip_process(struct nc_buff *ncb)
 {
 	struct iphdr *iph;
-	struct unetchannel unc;
-	int err;
 
 	ncb->nh.iph = iph = ncb_pull(ncb, sizeof(struct iphdr));
 	if (!iph)
@@ -88,12 +86,11 @@ int packet_ip_process(struct nc_buff *ncb)
 	ncb_pull(ncb, iph->ihl * 4 - sizeof(struct iphdr));
 	ncb_trim(ncb, ntohs(iph->tot_len) - iph->ihl * 4);
 
-	unc.proto = iph->protocol;
-	unc.laddr = iph->daddr;
-	unc.faddr = iph->saddr;
-	unc.lport = ((__u16 *)(iph + 1))[1];
-	unc.fport = ((__u16 *)(iph + 1))[0];
+	ncb_queue_tail(&ncb->nc->recv_queue, ncb);
+	ncb->nc->hit++;
 
-	err = netchannel_queue(ncb, &unc);
-	return err;
+	ulog("%s: queued packet: %u.%u.%u.%u -> %u.%u.%u.%u, hit: %llu.\n",
+			__func__, NIPQUAD(iph->saddr), NIPQUAD(iph->daddr), ncb->nc->hit);
+
+	return 0;
 }
