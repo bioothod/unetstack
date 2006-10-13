@@ -1,0 +1,32 @@
+Userspace network stack.
+
+This is an extremely small network stack implementation, which works on top of new netchannels interface [1].
+It was used as a base for Linux 2.6 netchannels alternative TCP/IP stack implementation 
+which was proven to be faster than existing Linux socket code.
+
+Project is being actively developed, so there are no stable API, documentation 
+or some other interesting things. For usage examples please see main() function
+in packet.c file.
+
+Supported features:
+
+    * TCP/UDP sending and receiving.
+    * Timestamp, window scaling, MSS TCP options.
+    * PAWS.
+    * Slow start and congestion control.
+    * Route table (including startic ARP cache).
+    * Socket-like interface.
+    * IP and ethernet processing code.
+    * complete retransmit algorithm.
+    * fast retransmit support.
+    * data split to MSS sized chunks.
+    * correct recv processing for bulk sending (although can stuck, which requires some tuning).
+    * support for TCP listen state (only point-to-point mode, i.e. no new data channels are created, 
+	when new client is connected, instead state is changed according to protocol 
+	(TCP state is changed to ESTABLISHED).
+
+Project homepage:
+http://tservice.net.ru/~s0mbre/old/?section=projects&item=unetstack
+
+1. Netchannel subsystem.
+http://tservice.net.ru/~s0mbre/old/?section=projects&item=netchannel
