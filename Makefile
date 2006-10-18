@@ -10,7 +10,7 @@ ifdef DEBUG
 CFLAGS += -DUDEBUG
 endif
 
-OBJS := atcp.o udp.o ip.o eth.o netchannel.o packet.o ncbuff.o route.o stat.o
+OBJS := atcp.o udp.o ip.o netchannel.o packet.o ncbuff.o route.o stat.o
 TARGETS	:= stack
 
 all: $(OBJS) $(TARGETS)

@@ -33,7 +33,6 @@
 
 #include <arpa/inet.h>
 #include <netpacket/packet.h>
-#include <net/ethernet.h>
 
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
@@ -62,7 +61,6 @@ int ip_build_header(struct nc_buff *ncb)
 
 	iph->check = in_csum((__u16 *)iph, iph->ihl*4);
 	return 0;
-	return eth_build_header(ncb);
 }
 
 int ip_send_data(struct nc_buff *ncb)

@@ -189,13 +189,13 @@ int main(int argc, char *argv[])
 
 	while (!need_exit) {
 		for (i=0; i<send_num; ++i) {
-			err = netchannel_send(nc, str, sizeof(str));
-			ulog("%s: send: err: %d.\n", __func__, err);
+			err = netchannel_recv(nc, str, sizeof(str));
+			ulog("%s: recv: err: %d.\n", __func__, err);
 			if (err > 0) {
 				stat_written += err;
 				stat_written_msg++;
 				last_fd = nc->hit;
-			} else {
+			} else if (err < 0) {
 				if (err != -EAGAIN)
 					need_exit = 1;
 				break;

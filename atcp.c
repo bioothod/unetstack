@@ -65,6 +65,7 @@ static __u8 atcp_offer_wscale = 8;
 
 static __u32 atcp_max_qlen = 1024*1024;
 static __u32 atcp_def_prev_update_ratio = 3;
+static unsigned int atcp_default_timeout = 1000;	/* In milliseconds */
 
 struct atcp_cb
 {
@@ -708,8 +709,6 @@ static int atcp_syn_sent(struct atcp_protocol *tp, struct nc_buff *ncb)
 		}
 
 		if (after(tp->snd_una, tp->iss)) {
-			int err;
-
 			atcp_set_state(tp, TCP_ESTABLISHED);
 			tp->seq_read = seq + 1;
 			return atcp_send_bit(tp, TCP_FLAG_ACK);
@@ -893,6 +892,10 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 		tp->rcv_nxt = end_seq;
 		ncb_queue_check(tp, &tp->ofo_queue);
 	} else {
+		printf("%s: seq: %u, end_seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u, cwnd: %u in_flight: %u [%u], rwin: %u.\n",
+			__func__, seq, end_seq, ack, 
+			tp->snd_una, tp->snd_nxt, tp_swin(tp), 
+			tp->rcv_nxt, rwin, tp->snd_cwnd, tp->in_flight, tp->in_flight_bytes, tp_rwin(tp));
 		/*
 		 * Out of order packet.
 		 */
@@ -1152,8 +1155,9 @@ static int atcp_out_read(struct netchannel *nc, unsigned int tm)
 {
 	struct nc_buff *ncb;
 	unsigned int init_len;
+	int err;
 
-	packet_eth_process(nc, tm);
+	err = netchannel_recv_raw(nc, tm);
 
 	ncb = atcp_process_in_ncb(nc, &init_len);
 	if (ncb) {
@@ -1161,7 +1165,7 @@ static int atcp_out_read(struct netchannel *nc, unsigned int tm)
 		return 1;
 	}
 
-	return 0;
+	return err;
 }
 
 static inline int atcp_retransmit_time(struct atcp_protocol *tp)
@@ -1258,7 +1262,7 @@ static int atcp_state_machine_run(struct atcp_protocol *tp, struct nc_buff *ncb)
 			err = sz;
 		goto out;
 	}
-
+	
 	err = atcp_parse_options(tp, ncb);
 	if (err < 0)
 		goto out;
@@ -1443,21 +1447,15 @@ static struct nc_buff *atcp_process_in_ncb(struct netchannel *nc, unsigned int *
 static int atcp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 {
 	struct atcp_protocol *tp = atcp_convert(nc->proto);
-	struct nc_buff *ncb;
 	int err = 0;
-	unsigned int read = 0, len;
+	unsigned int read = 0;
 
-	if (tp->state == TCP_CLOSE)
+	if (tp->state != TCP_ESTABLISHED)
 		return -ECONNRESET;
 
 	while (size) {
-#if 0
-		if (ncb_queue_empty(&nc->recv_queue) && read)
-			break;
-#endif
 		if (!ncb_queue_empty(&tp->ofo_queue)) {
 			err = atcp_read_data(tp, buf, size);
-
 			if (err > 0) {
 				size -= err;
 				buf += err;
@@ -1468,22 +1466,12 @@ static int atcp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 				break;
 		}
 
-		len = 0;
-		ncb = atcp_process_in_ncb(nc, &len);
-		if (!ncb)
+		err = atcp_out_read(nc, atcp_default_timeout);
+		if (err != -EAGAIN)
 			break;
 
-		if (len) {
-			err = atcp_read_data(tp, buf, size);
-
-			if (err > 0) {
-				size -= err;
-				buf += err;
-				read += err;
-			}
-		}
-
-		ncb_put(ncb);
+		if (tp->state != TCP_ESTABLISHED)
+			break;
 	}
 
 	if (atcp_retransmit_time(tp))
@@ -1518,23 +1506,13 @@ static int atcp_create(struct netchannel *nc)
 	if (nc->unc.state == NETCHANNEL_ATCP_LISTEN)
 		return atcp_init_listen(nc);
 	else if (nc->unc.state == NETCHANNEL_ATCP_CONNECT) {
-		int err, i;
-		unsigned int init_len = 0;
-		struct nc_buff *ncb;
+		int err;
 
 		err = atcp_connect(nc);
 		if (err)
 			return err;
 
-		for (i=0; i<4; ++i) {
-			err = packet_eth_process(nc, 1000);
-			if (!err)
-				break;
-		}
-
-		ncb = atcp_process_in_ncb(nc, &init_len);
-		if (ncb)
-			ncb_put(ncb);
+		atcp_out_read(nc, atcp_default_timeout);
 
 		if (tp->state == TCP_ESTABLISHED)
 			return 0;
@@ -1724,7 +1702,7 @@ static int atcp_process_out(struct netchannel *nc, void *buf, unsigned int data_
 
 out_read:
 	if ((sent && ++tp->sent_without_reading >= 2) || ret != (signed)data_size) {
-		unsigned int tm = 1000;
+		unsigned int tm = atcp_default_timeout;
 
 		if ((tp->state == TCP_ESTABLISHED) && atcp_can_send(tp, NULL))
 			tm = 0;

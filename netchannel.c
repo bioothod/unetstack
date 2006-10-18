@@ -23,6 +23,7 @@
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#include <sys/poll.h>
 
 #include <unistd.h>
 #include <stdio.h>
@@ -54,21 +55,10 @@ static inline void netchannel_dump(struct unetchannel *unc, char *prefix, int er
 	}
 }
 
-int netchannel_remove(struct netchannel *nc)
+void netchannel_remove(struct netchannel *nc)
 {
-	struct unetchannel_control ctl;
-	int err;
-
-	memset(&ctl, 0, sizeof(struct unetchannel_control));
-
-	memcpy(&ctl.unc, &nc->unc, sizeof(struct unetchannel));
-
-	ctl.cmd = NETCHANNEL_REMOVE;
-
-	err = netchannel_control(&ctl);
-	
-	netchannel_dump(&ctl.unc, "remove", err, 0);
-	return err;
+	close(nc->fd);
+	netchannel_dump(&nc->unc, "remove", 0, 0);
 }
 
 struct netchannel *netchannel_create(struct unetchannel *unc)
@@ -116,6 +106,53 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 
 	netchannel_dump(&ctl.unc, "create", err, 0);
 	return nc;
+}
+
+int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
+{
+	struct nc_buff *ncb;
+	int err;
+	struct pollfd pfd;
+
+	ncb = ncb_alloc(4096);
+	if (!ncb)
+		return -ENOMEM;
+
+	pfd.fd = nc->fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+
+	err = poll(&pfd, 1, tm);
+	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
+		return err;
+	}
+
+	if (!(pfd.revents & POLLIN) || !err) {
+		ulog("%s: no data.\n", __func__);
+		return -EAGAIN;
+	}
+
+	err = read(nc->fd, ncb->head, ncb->len);
+	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
+		return err;
+	}
+	if (err == 0)
+		return -EAGAIN;
+
+	ncb_trim(ncb, err);
+	ncb->nc = nc;
+
+	err = packet_ip_process(ncb);
+	if (err)
+		goto err_out_free;
+
+	return 0;
+
+err_out_free:
+	ncb_put(ncb);
+	return err;
 }
 
 int netchannel_send_raw(struct nc_buff *ncb)

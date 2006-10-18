@@ -30,8 +30,6 @@
 #include <linux/unistd.h>
 #include <linux/netchannel.h>
 
-#include <net/ethernet.h>
-
 #define PACKET_NAME	"packet"
 
 #ifdef UDEBUG
@@ -119,12 +117,10 @@ extern void ncb_free(struct nc_buff *);
 extern int transmit_data(struct nc_buff *ncb);
 int ip_build_header(struct nc_buff *ncb);
 int ip_send_data(struct nc_buff *ncb);
-int eth_build_header(struct nc_buff *ncb);
 
 void packet_dump(__u8 *data, unsigned int size);
 
 int packet_ip_process(struct nc_buff *ncb);
-int packet_eth_process(struct netchannel *nc, unsigned int tm);
 
 static inline void *ncb_push(struct nc_buff *ncb, unsigned int size)
 {
@@ -323,12 +319,13 @@ struct netchannel
 };
 
 struct netchannel *netchannel_create(struct unetchannel *unc);
-int netchannel_remove(struct netchannel *nc);
+void netchannel_remove(struct netchannel *nc);
 int netchannel_bind(struct netchannel *nc);
 
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_send_raw(struct nc_buff *ncb);
+int netchannel_recv_raw(struct netchannel *nc, unsigned int tm);
 
 void netchannel_setup_unc(struct unetchannel *unc,
 		unsigned int laddr, unsigned short lport,
