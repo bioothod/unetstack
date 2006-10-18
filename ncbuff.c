@@ -53,6 +53,8 @@ struct nc_buff *ncb_alloc(unsigned int size)
 
 void ncb_free(struct nc_buff *ncb)
 {
+	if (ncb->dst)
+		route_put(ncb->dst);
 	memset(ncb->data, 0xFF, ncb->total_size);
 	free(ncb->data);
 	memset(ncb, 0xFF, sizeof(struct nc_buff));

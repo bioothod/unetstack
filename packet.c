@@ -109,14 +109,6 @@ int main(int argc, char *argv[])
 	__u32 src, dst;
 	__u16 sport, dport;
 	__u8 proto;
-	//__u8 edst[] = {0x00, 0x0E, 0x0C, 0x81, 0x20, 0xFF}; /* e1000 old*/
-	//__u8 edst[] = {0x00, 0x90, 0x27, 0xAF, 0x83, 0x81}; /* dea */
-	//__u8 edst[] = {0x00, 0x10, 0x22, 0xFD, 0xC4, 0xD6}; /* 3com*/
-	//__u8 edst[] = {0x00, 0x0C, 0x6E, 0xAD, 0xBB, 0x8B}; /* kano */
-	//__u8 edst[] = {0x00, 0xE0, 0x18, 0xF5, 0x9D, 0xE6}; /* linoleum2 */
-	__u8 edst[] = {0x00, 0x08, 0xC7, 0x2A, 0xD2, 0x63}; /* e1000 new */
-	//__u8 edst[] = {0x00, 0x00, 0x21, 0x01, 0x95, 0xD1}; /* home lan */
-	__u8 esrc[] = {0x00, 0x11, 0x09, 0x61, 0xEB, 0x0E};
 	struct nc_route rt;
 	char str[128];
 	unsigned int timeout, state;
@@ -177,8 +169,6 @@ int main(int argc, char *argv[])
 	rt.src = src;
 	rt.dst = dst;
 	rt.proto = proto;
-	memcpy(rt.edst, edst, ETH_ALEN);
-	memcpy(rt.esrc, esrc, ETH_ALEN);
 
 	err = route_add(&rt);
 	if (err)
@@ -199,8 +189,6 @@ int main(int argc, char *argv[])
 
 	while (!need_exit) {
 		for (i=0; i<send_num; ++i) {
-			memset(str, 0xab, sizeof(str));
-			snprintf(str, sizeof(str), "Counter: sent: %u, recv: %u.\n", sent, recv);
 			err = netchannel_send(nc, str, sizeof(str));
 			ulog("%s: send: err: %d.\n", __func__, err);
 			if (err > 0) {

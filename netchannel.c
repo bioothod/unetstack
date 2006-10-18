@@ -118,27 +118,6 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 	return nc;
 }
 
-int netchannel_bind(struct netchannel *nc)
-{
-	struct unetchannel_control ctl;
-	int err;
-
-	memset(&ctl, 0, sizeof(struct unetchannel_control));
-	memcpy(&ctl.unc, &nc->unc, sizeof(struct unetchannel));
-
-	ctl.cmd = NETCHANNEL_BIND;
-
-	err = netchannel_control(&ctl);
-	if (err && errno == EEXIST)
-		err = 0;
-
-	if (!err)
-		nc->fd = ctl.fd;
-	
-	netchannel_dump(&ctl.unc, "bind", err, 0);
-	return ctl.fd;
-}
-
 int netchannel_send_raw(struct nc_buff *ncb)
 {
 	unsigned char buf[4096];

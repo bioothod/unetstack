@@ -245,8 +245,11 @@ static int atcp_opt_ts(struct atcp_protocol *tp, struct nc_buff *ncb, __u8 *data
 		return 1;
 	}
 	
-	if (between(tp->ack_sent, seq, end_seq))
+	if (between(tp->ack_sent, seq, end_seq) || (tp->state == TCP_SYN_SENT))
 		tp->tsecr = packet_tsval;
+	else {
+		ulog("%s: ack_sent: %u, seq: %u, end_seq: %u.\n", __func__, tp->ack_sent, seq, end_seq);
+	}
 	return 0;
 }
 
@@ -705,6 +708,8 @@ static int atcp_syn_sent(struct atcp_protocol *tp, struct nc_buff *ncb)
 		}
 
 		if (after(tp->snd_una, tp->iss)) {
+			int err;
+
 			atcp_set_state(tp, TCP_ESTABLISHED);
 			tp->seq_read = seq + 1;
 			return atcp_send_bit(tp, TCP_FLAG_ACK);
@@ -1148,7 +1153,7 @@ static int atcp_out_read(struct netchannel *nc, unsigned int tm)
 	struct nc_buff *ncb;
 	unsigned int init_len;
 
-	packet_eth_process(nc);
+	packet_eth_process(nc, tm);
 
 	ncb = atcp_process_in_ncb(nc, &init_len);
 	if (ncb) {
@@ -1521,8 +1526,8 @@ static int atcp_create(struct netchannel *nc)
 		if (err)
 			return err;
 
-		for (i=0; i<100; ++i) {
-			err = packet_eth_process(nc);
+		for (i=0; i<4; ++i) {
+			err = packet_eth_process(nc, 1000);
 			if (!err)
 				break;
 		}
@@ -1553,16 +1558,8 @@ static int atcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int
 	struct nc_buff *ncb;
 	int err = 0;
 	unsigned int copy, total = 0;
-	struct nc_route *dst;
 
 	*sent = 0;
-
-	dst = netchannel_route_get(nc);
-	if (!dst) {
-		err = -ENODEV;
-		goto out;
-	}
-	
 	while (data_size) {
 		ncb = tp->last_ncb;
 		if (!ncb || !ncb_tailroom(ncb)) {
@@ -1572,10 +1569,15 @@ static int atcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int
 				goto out;
 			}
 
-			ncb->dst = dst;
+			ncb->dst = netchannel_route_get(nc);
+			if (!ncb->dst) {
+				err = -ENODEV;
+				goto out;
+			}
+	
 			ncb->nc = nc;
 
-			ncb_pull(ncb, dst->header_size);
+			ncb_pull(ncb, ncb->dst->header_size);
 			
 			ncb->tail = ncb->head;
 			ncb->len = 0;
@@ -1725,7 +1727,7 @@ out_read:
 		unsigned int tm = 1000;
 
 		if ((tp->state == TCP_ESTABLISHED) && atcp_can_send(tp, NULL))
-			tm = 1000;
+			tm = 0;
 		atcp_out_read(nc, tm);
 		tp->sent_without_reading = 0;
 	}

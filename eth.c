@@ -37,32 +37,35 @@
 
 #include "sys.h"
 
-int eth_build_header(struct nc_buff *ncb)
-{
-	struct ether_header *eth;
-
-	eth = ncb_push(ncb, sizeof(struct ether_header));
-	if (!eth)
-		return -ENOMEM;
-
-	memcpy(eth->ether_dhost, ncb->dst->edst, ETH_ALEN);
-	memcpy(eth->ether_shost, ncb->dst->esrc, ETH_ALEN);
-	eth->ether_type = htons(ETH_P_IP);
-	return 0;
-}
-
-int packet_eth_process(struct netchannel *nc)
+int packet_eth_process(struct netchannel *nc, unsigned int tm)
 {
 	struct nc_buff *ncb;
 	struct ether_header *eth;
 	int err;
+	struct pollfd pfd;
 
 	ncb = ncb_alloc(4096);
 	if (!ncb)
 		return -ENOMEM;
 
+	pfd.fd = nc->fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+
+	err = poll(&pfd, 1, tm);
+	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
+		return err;
+	}
+
+	if (!(pfd.revents & POLLIN) || !err) {
+		ulog("%s: no data.\n", __func__);
+		return -EAGAIN;
+	}
+
 	err = read(nc->fd, ncb->head, ncb->len);
 	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
 		return err;
 	}
 	if (err == 0)

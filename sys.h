@@ -64,7 +64,6 @@ struct netchannel;
 struct nc_route
 {
 	__u32			src, dst;
-	__u8			edst[ETH_ALEN], esrc[ETH_ALEN];
 	__u8			proto;
 	unsigned int		header_size;
 	int			refcnt;
@@ -125,7 +124,7 @@ int eth_build_header(struct nc_buff *ncb);
 void packet_dump(__u8 *data, unsigned int size);
 
 int packet_ip_process(struct nc_buff *ncb);
-int packet_eth_process(struct netchannel *nc);
+int packet_eth_process(struct netchannel *nc, unsigned int tm);
 
 static inline void *ncb_push(struct nc_buff *ncb, unsigned int size)
 {
