@@ -892,10 +892,6 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 		tp->rcv_nxt = end_seq;
 		ncb_queue_check(tp, &tp->ofo_queue);
 	} else {
-		printf("%s: seq: %u, end_seq: %u, ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, rcv_nxt: %u, rcv_wnd: %u, cwnd: %u in_flight: %u [%u], rwin: %u.\n",
-			__func__, seq, end_seq, ack, 
-			tp->snd_una, tp->snd_nxt, tp_swin(tp), 
-			tp->rcv_nxt, rwin, tp->snd_cwnd, tp->in_flight, tp->in_flight_bytes, tp_rwin(tp));
 		/*
 		 * Out of order packet.
 		 */
