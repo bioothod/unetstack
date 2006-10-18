@@ -160,7 +160,6 @@ int netchannel_send_raw(struct nc_buff *ncb)
 	unsigned char buf[4096];
 	struct unetchannel_control *ctl = (struct unetchannel_control *)buf;
 	struct iphdr *iph = ncb->nh.iph;
-	int err;
 
 	if (ncb->len > sizeof(buf) - sizeof(struct unetchannel_control))
 		return -EINVAL;
@@ -177,9 +176,7 @@ int netchannel_send_raw(struct nc_buff *ncb)
 
 	memcpy(&buf[sizeof(struct unetchannel_control)], ncb->head, ncb->len);
 
-	err = netchannel_control(ctl);
-	ulog("%s: len: %u, header_len: %u, err: %d.\n", __func__, ctl->len, ctl->header_len, err);
-	return err;
+	return netchannel_control(ctl);
 }
 
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
