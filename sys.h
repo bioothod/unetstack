@@ -331,7 +331,7 @@ void netchannel_setup_unc(struct unetchannel *unc,
 		unsigned int laddr, unsigned short lport,
 		unsigned int faddr, unsigned short fport,
 		unsigned int proto, unsigned int state,
-		unsigned int timeout);
+		unsigned int timeout, unsigned int order);
 
 static inline __u16 in_csum(__u16 *addr, unsigned int len)
 {

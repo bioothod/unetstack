@@ -26,7 +26,7 @@ netchannel.o:	netchannel.c sys.h Makefile
 ncbuff.o:	ncbuff.c sys.h Makefile
 route.o:	route.c sys.h Makefile
 packet.o:	packet.c sys.h Makefile
-eth.o:		eth.c sys.h Makefile
+stat.o:		stat.c stat.h sys.h Makefile
 
 %.o:$(patsubst %.o,%.c,$<)
 	$(CC) $(CFLAGS) $(patsubst %.o,%.c,$@) -c -o $@

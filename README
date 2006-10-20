@@ -16,7 +16,7 @@ Supported features:
     * Slow start and congestion control.
     * Route table (including startic ARP cache).
     * Socket-like interface.
-    * IP and ethernet processing code.
+    * IP processing code.
     * complete retransmit algorithm.
     * fast retransmit support.
     * data split to MSS sized chunks.

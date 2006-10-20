@@ -35,7 +35,6 @@
 
 #include <arpa/inet.h>
 #include <netpacket/packet.h>
-#include <net/ethernet.h>
 
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
@@ -64,6 +63,7 @@ int transmit_data(struct nc_buff *ncb)
 	if (ncb->dst->proto == IPPROTO_TCP) {
 		struct iphdr *iph = ncb->nh.iph;
 		struct tcphdr *th = ncb->h.th;
+
 		ulog("S %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u, doff: %u, "
 			"s: %u, a: %u, p: %u, r: %u, f: %u: tlen: %u.\n",
 			NIPQUAD(iph->saddr), ntohs(th->source),
@@ -97,7 +97,7 @@ static unsigned int packet_convert_addr(char *addr_str, unsigned int *addr)
 
 static void usage(const char *p)
 {
-	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -t timeout -l -h\n", p);
+	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -t timeout -l -o order -h\n", p);
 }
 
 int main(int argc, char *argv[])
@@ -111,7 +111,7 @@ int main(int argc, char *argv[])
 	__u8 proto;
 	struct nc_route rt;
 	char str[128];
-	unsigned int timeout, state;
+	unsigned int timeout, state, order;
 
 	srand(time(NULL));
 
@@ -123,9 +123,13 @@ int main(int argc, char *argv[])
 	send_num = 1;
 	timeout = 0;
 	state = NETCHANNEL_ATCP_CONNECT;
+	order = 20;
 
-	while ((ch = getopt(argc, argv, "n:s:d:S:D:hp:t:l")) != -1) {
+	while ((ch = getopt(argc, argv, "n:s:d:S:D:hp:t:lo:")) != -1) {
 		switch (ch) {
+			case 'o':
+				order = atoi(optarg);
+				break;
 			case 'l':
 				state = NETCHANNEL_ATCP_LISTEN;
 				break;
@@ -174,7 +178,7 @@ int main(int argc, char *argv[])
 	if (err)
 		return err;
 
-	netchannel_setup_unc(&unc, src, sport, dst, dport, proto, state, timeout);
+	netchannel_setup_unc(&unc, src, sport, dst, dport, proto, state, timeout, order);
 	nc = netchannel_create(&unc);
 	if (!nc)
 		return -EINVAL;

@@ -43,6 +43,7 @@ unsigned long long stat_written = 0, stat_written_msg = 0;
 static struct timeval tm1, tm2;
 static unsigned long init_utime, init_stime;
 int last_fd;
+unsigned long syscall_recv, syscall_send;
 
 static int cpu_test_usage(unsigned long *sys_utime, unsigned long *sys_stime)
 {
@@ -142,8 +143,9 @@ void print_stat(void)
 	utime = utime*1000/mdiff;
 	stime = stime*1000/mdiff;
 
-	printf("Written %llu Mb, %llu messages, time %f sec, speed %f Mb/sec, %f msg/sec, CPU test_usage user: %3lu, kernel: %3lu, last_fd: %d.\n", 
-			stat_written/1024/1024, stat_written_msg, ((double)diff)/1000000.0, speed, speed_msg, utime, stime, last_fd);
+	printf("Written %llu Mb, %llu messages, time %f sec, speed %f Mb/sec, %f msg/sec, CPU test_usage user: %3lu, kernel: %3lu, last_fd: %d, sc: recv: %lu, send: %lu.\n", 
+			stat_written/1024/1024, stat_written_msg, ((double)diff)/1000000.0, speed, speed_msg, utime, stime, last_fd,
+			syscall_recv, syscall_send);
 	
 	init_utime = utime;
 	init_stime = stime;

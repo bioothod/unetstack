@@ -108,6 +108,8 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 	return nc;
 }
 
+extern unsigned long syscall_recv, syscall_send;
+
 int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 {
 	struct nc_buff *ncb;
@@ -122,6 +124,8 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 	pfd.events = POLLIN;
 	pfd.revents = 0;
 
+	syscall_recv += 1;
+
 	err = poll(&pfd, 1, tm);
 	if (err < 0) {
 		ulog_err("%s: failed to read", __func__);
@@ -132,6 +136,8 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 		ulog("%s: no data.\n", __func__);
 		return -EAGAIN;
 	}
+	
+	syscall_recv += 1;
 
 	err = read(nc->fd, ncb->head, ncb->len);
 	if (err < 0) {
@@ -176,6 +182,8 @@ int netchannel_send_raw(struct nc_buff *ncb)
 
 	memcpy(&buf[sizeof(struct unetchannel_control)], ncb->head, ncb->len);
 
+	syscall_send++;
+
 	return netchannel_control(ctl);
 }
 
@@ -193,9 +201,9 @@ void netchannel_setup_unc(struct unetchannel *unc,
 		unsigned int laddr, unsigned short lport,
 		unsigned int faddr, unsigned short fport,
 		unsigned int proto, unsigned int state,
-		unsigned int timeout)
+		unsigned int timeout, unsigned int order)
 {
-	unc->memory_limit_order = 31;
+	unc->memory_limit_order = order;
 	unc->faddr = faddr;
 	unc->laddr = laddr;
 	unc->fport = htons(fport);

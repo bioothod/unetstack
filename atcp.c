@@ -61,7 +61,7 @@ enum {
 #endif
 
 #define TCP_MAX_WSCALE	14
-static __u8 atcp_offer_wscale = 8;
+static __u8 atcp_offer_wscale = 7;
 
 static __u32 atcp_max_qlen = 1024*1024;
 static __u32 atcp_def_prev_update_ratio = 3;
@@ -171,10 +171,12 @@ static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
 	return seq3 - seq2 >= seq1 - seq2;
 }
 
+static __u32 atcp_time;
 static inline __u32 atcp_packet_timestamp(void)
 {
+	return atcp_time++;
 	//return (__u32)get_cycles();
-	return time(NULL);
+	//return time(NULL);
 }
 
 struct atcp_option
@@ -318,11 +320,6 @@ static int atcp_build_header(struct atcp_protocol *tp, struct nc_buff *ncb, __u3
 	ncb->h.th = th = (struct tcphdr *)ncb_push(ncb, sizeof(struct tcphdr));
 	memset(th, 0, sizeof(struct tcphdr));
 
-#if 0
-	ulog("%s: len:%d head:%p data:%p tail:%p end:%p dev:%s\n",
-	       __func__, ncb->len, ncb->head, ncb->data, ncb->tail, ncb->end,
-	       ncb->dev ? ncb->dev->name : "<NULL>");
-#endif
 	th->source = tp->nc->unc.lport;
 	th->dest = tp->nc->unc.fport;
 	th->seq = htonl(tp->snd_nxt);
@@ -604,6 +601,9 @@ static void ncb_queue_order(struct nc_buff *ncb, struct nc_buff_head *head)
 	unsigned int nseq = TCP_NCB_CB(ncb)->seq;
 	unsigned int nend_seq = TCP_NCB_CB(ncb)->end_seq;
 
+	if (!ncb->len)
+		return;
+
 	ulog("ofo queue: ncb: %p, seq: %u, end_seq: %u.\n", ncb, nseq, nend_seq);
 
 	if (!next) {
@@ -836,7 +836,7 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 	}
 
 	if (after(end_seq, tp->rcv_nxt + rwin)) {
-		ulog("%s: 1: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", 
+		fprintf(stderr, "%s: 1: seq: %u, size: %u, rcv_nxt: %u, rcv_wnd: %u.\n", 
 				__func__, seq, ncb->len, tp->rcv_nxt, rwin);
 		goto out;
 	}
@@ -886,12 +886,27 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 		}
 		tp->snd_una = ack;
 		atcp_check_retransmit_queue(tp, ack);
+		
+		if (before(tp->snd_wl1, seq) || ((tp->snd_wl1 == seq) && beforeeq(tp->snd_wl2, ack))) {
+			ulog("%s: Window update: snd_wnd: %u [%u], new: %u, wl1: %u, seq: %u, wl2: %u, ack: %u.\n",
+					__func__, tp->snd_wnd, tp_swin(tp), ntohs(th->window),
+					tp->snd_wl1, seq, tp->snd_wl2, ack);
+			tp->snd_wnd = ntohs(th->window);
+			tp->snd_wl1 = seq;
+			tp->snd_wl2 = ack;
+		}
+	
 	}
 
 	if (beforeeq(seq, tp->rcv_nxt) && aftereq(end_seq, tp->rcv_nxt)) {
 		tp->rcv_nxt = end_seq;
 		ncb_queue_check(tp, &tp->ofo_queue);
 	} else {
+		ulog("Out of order: rwin: %u, swin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
+				rwin, tp_swin(tp), seq, tp->rcv_nxt, ncb->len);
+		
+		ncb_queue_order(ncb, &tp->ofo_queue);
+		atcp_send_bit(tp, TCP_FLAG_ACK);
 		/*
 		 * Out of order packet.
 		 */
@@ -903,7 +918,7 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 		ncb_queue_order(ncb, &tp->ofo_queue);
 
 		tp->ack_missed_bytes += ncb->len;
-		if (atcp_in_slow_start(tp) == 1 || tp->ack_missed_bytes >= (__u32)3*tp->mss || ++tp->ack_missed >= 3) {
+		if (atcp_in_slow_start(tp) == 1 || tp->ack_missed_bytes >= (__u32)1*tp->mss || ++tp->ack_missed >= 1) {
 			tp->ack_missed_bytes = 0;
 			tp->ack_missed = 0;
 			err = atcp_send_bit(tp, TCP_FLAG_ACK);
@@ -911,13 +926,7 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 				goto out;
 		}
 	}
-#if 1
-	if (before(tp->snd_wl1, seq) || ((tp->snd_wl1 == seq) && beforeeq(tp->snd_wl2, ack))) {
-		tp->snd_wnd = ntohs(th->window);
-		tp->snd_wl1 = seq;
-		tp->snd_wl2 = ack;
-	}
-#endif
+
 	if (th->fin) {
 		atcp_set_state(tp, TCP_CLOSE_WAIT);
 		err = 0;
@@ -1276,8 +1285,8 @@ static int atcp_state_machine_run(struct atcp_protocol *tp, struct nc_buff *ncb)
 				broken = 0;
 
 		if (broken && !th->rst) {
-			ulog("R broken: rwin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
-					rwin, seq, tp->rcv_nxt, ncb->len);
+			ulog("R broken: rwin: %u, swin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
+					rwin, tp_swin(tp), seq, tp->rcv_nxt, ncb->len);
 			return atcp_send_bit(tp, TCP_FLAG_ACK);
 		}
 
@@ -1295,8 +1304,10 @@ static int atcp_state_machine_run(struct atcp_protocol *tp, struct nc_buff *ncb)
 			goto out;
 		}
 
-		if (!th->ack)
+		if (!th->ack) {
+			fprintf(stderr, "%s: Strange packet.\n", __func__);
 			goto out;
+		}
 
 		err = atcp_state_machine[tp->state].run(tp, ncb);
 
@@ -1481,7 +1492,8 @@ static int atcp_create(struct netchannel *nc)
 	struct atcp_protocol *tp = atcp_convert(nc->proto);
 
 	get_random_bytes(&tp->iss, sizeof(tp->iss));
-	tp->snd_wnd = 4096;
+	tp->snd_wl1 = tp->snd_wl2 = 0;
+	tp->snd_wnd = 1024;
 	tp->snd_nxt = tp->iss;
 	tp->rcv_wnd = 0xffff;
 	tp->rwscale = 0;
