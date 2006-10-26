@@ -88,15 +88,18 @@ void route_fini(void)
 int route_add(struct nc_route *rt)
 {
 	unsigned int i;
+	void *new_table;
 
 	for (i=0; i<route_num; ++i)
 		if (rt->dst == route_table[i].dst && rt->src == route_table[i].src)
 			return 0;
 
 	route_num++;
-	route_table = realloc(route_table, sizeof(struct nc_route) * route_num);
-	if (!route_table)
+	new_table = realloc(route_table, sizeof(struct nc_route) * route_num);
+	if (!new_table)
 		return -ENOMEM;
+
+	route_table = new_table;
 
 	memcpy(&route_table[route_num - 1], rt, sizeof(struct nc_route));
 	route_table[route_num - 1].refcnt = 1;
