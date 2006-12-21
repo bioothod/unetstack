@@ -97,12 +97,12 @@ static unsigned int packet_convert_addr(char *addr_str, unsigned int *addr)
 
 static void usage(const char *p)
 {
-	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -t timeout -l -o order -h\n", p);
+	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -l -o order -h\n", p);
 }
 
 int main(int argc, char *argv[])
 {
-	int err, ch, send_num, sent, recv, i;
+	int err, ch, sent, recv;
 	struct unetchannel unc;
 	struct netchannel *nc;
 	char *saddr, *daddr;
@@ -110,8 +110,8 @@ int main(int argc, char *argv[])
 	__u16 sport, dport;
 	__u8 proto;
 	struct nc_route rt;
-	char str[128];
-	unsigned int timeout, state, order;
+	char str[4096];
+	unsigned int state, order, size;
 
 	srand(time(NULL));
 
@@ -120,21 +120,22 @@ int main(int argc, char *argv[])
 	sport = rand();
 	dport = 1025;
 	proto = IPPROTO_TCP;
-	send_num = 1;
-	timeout = 0;
 	state = NETCHANNEL_ATCP_CONNECT;
 	order = 20;
+	size = sizeof(str);
 
-	while ((ch = getopt(argc, argv, "n:s:d:S:D:hp:t:lo:")) != -1) {
+	while ((ch = getopt(argc, argv, "n:s:d:S:D:hp:t:lo:b:")) != -1) {
 		switch (ch) {
+			case 'b':
+				size = atoi(optarg);
+				if (size > sizeof(str))
+					size = sizeof(str);
+				break;
 			case 'o':
 				order = atoi(optarg);
 				break;
 			case 'l':
 				state = NETCHANNEL_ATCP_LISTEN;
-				break;
-			case 'n':
-				send_num = atoi(optarg);
 				break;
 			case 'p':
 				proto = atoi(optarg);
@@ -150,9 +151,6 @@ int main(int argc, char *argv[])
 				break;
 			case 's':
 				saddr = optarg;
-				break;
-			case 't':
-				timeout = atoi(optarg);
 				break;
 			default:
 				usage(argv[0]);
@@ -178,10 +176,11 @@ int main(int argc, char *argv[])
 	if (err)
 		return err;
 
-	netchannel_setup_unc(&unc, src, sport, dst, dport, proto, state, timeout, order);
+	netchannel_setup_unc(&unc, src, sport, dst, dport, proto, order);
 	nc = netchannel_create(&unc);
 	if (!nc)
 		return -EINVAL;
+	nc->state = state;
 
 	signal(SIGTERM, term_signal);
 	signal(SIGINT, term_signal);
@@ -192,23 +191,19 @@ int main(int argc, char *argv[])
 	sent = recv = 0;
 
 	while (!need_exit) {
-		for (i=0; i<send_num; ++i) {
-			err = netchannel_recv(nc, str, sizeof(str));
-			ulog("%s: recv: err: %d.\n", __func__, err);
-			if (err > 0) {
-				stat_written += err;
-				stat_written_msg++;
-				last_fd = nc->hit;
-			} else if (err < 0) {
-				if (err != -EAGAIN)
-					need_exit = 1;
-				break;
-			}
-
+		err = netchannel_send(nc, str, size);
+		ulog("%s: recv: err: %d.\n", __func__, err);
+		if (err > 0) {
+			stat_written += err;
+			stat_written_msg++;
+			last_fd = nc->hit;
+		} else if (err < 0) {
+			if (err != -EAGAIN)
+				need_exit = 1;
 		}
 	}
 
 	netchannel_remove(nc);
 
-	return 0;
+	return err;
 }

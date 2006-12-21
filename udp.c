@@ -62,16 +62,16 @@ static int udp_build_header(struct udp_protocol *up __attribute__ ((unused)), st
 	if (!uh)
 		return -ENOMEM;
 	
-	uh->source = ncb->nc->unc.lport;
-	uh->dest = ncb->nc->unc.fport;
+	uh->source = ncb->nc->unc.data.sport;
+	uh->dest = ncb->nc->unc.data.dport;
 	uh->len = htons(ncb->len);
 	uh->check = 0;
 	
 	p = (struct pseudohdr *)(((__u8 *)uh) - sizeof(struct pseudohdr));
 	memset(p, 0, sizeof(*p));
 
-	p->saddr = ncb->nc->unc.laddr;
-	p->daddr = ncb->nc->unc.faddr;
+	p->saddr = ncb->nc->unc.data.saddr;
+	p->daddr = ncb->nc->unc.data.daddr;
 	p->tp = IPPROTO_UDP;
 	p->len = htonl(ncb->len);
 
@@ -103,7 +103,7 @@ static int udp_process_out(struct netchannel *nc, void *buf, unsigned int size)
 	struct udp_protocol *up = udp_convert(nc->proto);
 	struct nc_route *dst;
 
-	dst = route_get(nc->unc.faddr, nc->unc.laddr);
+	dst = route_get(nc->unc.data.daddr, nc->unc.data.saddr);
 	if (!dst)
 		return -ENODEV;
 
@@ -114,7 +114,7 @@ static int udp_process_out(struct netchannel *nc, void *buf, unsigned int size)
 	}
 
 	ncb->dst = dst;
-	ncb->dst->proto = nc->unc.proto;
+	ncb->dst->proto = nc->unc.data.proto;
 	ncb->nc = nc;
 
 	ncb_pull(ncb, dst->header_size);

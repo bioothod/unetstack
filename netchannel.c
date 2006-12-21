@@ -20,6 +20,7 @@
  */
 
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/socket.h>
@@ -38,27 +39,31 @@
 #include <arpa/inet.h>
 
 #include "sys.h"
+#include <linux/unistd.h>
+
+#define _syscall1(type,name,type1,arg1) \
+type name (type1 arg1) \
+{\
+	return syscall(__NR_##name, arg1);\
+}
 
 _syscall1(int, netchannel_control, void *, arg1);
 
-static inline void netchannel_dump(struct unetchannel *unc, char *prefix, int err, unsigned int len)
+static void netchannel_dump(struct netchannel *nc, char *str, int err)
 {
-	if (err)
-		ulog_err("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, len: %u, copy: %u, state: %u, err: %d",
-				prefix, NIPQUAD(unc->laddr), ntohs(unc->lport), NIPQUAD(unc->faddr), ntohs(unc->fport),	
-				unc->proto, len, unc->copy, unc->state, err);
-	else {
-		ulog("%s %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u, proto: %u, len: %u, copy: %u, state: %u, err: %d.\n",
-				prefix, NIPQUAD(unc->laddr), ntohs(unc->lport), NIPQUAD(unc->faddr), ntohs(unc->fport),	
-				unc->proto, len, unc->copy, unc->state, err);
-
-	}
+	ulog("netchannel: %s [%u.%u.%u.%u:%u, %u.%u.%u.%u:%u] -> [%u.%u.%u.%u:%u, %u.%u.%u.%u:%u], "
+			"proto: [%u, %u], type: %u, order: %u [%u], err: %d.\n",
+			str, 
+			NIPQUAD(nc->unc.data.saddr), ntohs(nc->unc.data.sport), NIPQUAD(nc->unc.mask.saddr), ntohs(nc->unc.mask.sport),
+			NIPQUAD(nc->unc.data.daddr), ntohs(nc->unc.data.dport), NIPQUAD(nc->unc.mask.daddr), ntohs(nc->unc.mask.dport),
+			nc->unc.data.proto, nc->unc.mask.proto, 
+			nc->unc.type, nc->unc.memory_limit_order, (1<<nc->unc.memory_limit_order), err);
 }
 
 void netchannel_remove(struct netchannel *nc)
 {
 	close(nc->fd);
-	netchannel_dump(&nc->unc, "remove", 0, 0);
+	netchannel_dump(nc, "remove", 0);
 }
 
 struct netchannel *netchannel_create(struct unetchannel *unc)
@@ -68,9 +73,9 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 	struct common_protocol *proto;
 	struct netchannel *nc;
 
-	if (unc->proto == IPPROTO_TCP)
+	if (unc->data.proto == IPPROTO_TCP)
 		proto = &atcp_common_protocol;
-	else if (unc->proto == IPPROTO_UDP)
+	else if (unc->data.proto == IPPROTO_UDP)
 		proto = &udp_common_protocol;
 	else
 		return NULL;
@@ -98,13 +103,14 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 		nc->fd = err;
 		err = nc->proto->create(nc);
 	}
-	
+
+	netchannel_dump(nc, "create", err);
+
 	if (err) {
 		free(nc);
 		nc = NULL;
 	}
 
-	netchannel_dump(&ctl.unc, "create", err, 0);
 	return nc;
 }
 
@@ -163,28 +169,15 @@ err_out_free:
 
 int netchannel_send_raw(struct nc_buff *ncb)
 {
-	unsigned char buf[4096];
-	struct unetchannel_control *ctl = (struct unetchannel_control *)buf;
-	struct iphdr *iph = ncb->nh.iph;
+	struct netchannel *nc = ncb->nc;
+	int err;
 
-	if (ncb->len > sizeof(buf) - sizeof(struct unetchannel_control))
-		return -EINVAL;
-
-	memset(buf, 0, sizeof(buf));
-
-	ctl->cmd = NETCHANNEL_SEND;
-	ctl->fd = ncb->nc->fd;
-	ctl->len = ncb->len;
-	ctl->header_len = iph->ihl * 4;
-	ctl->timeout = ncb->nc->unc.init_stat_work;
-
-	memcpy(&ctl->unc, &ncb->nc->unc, sizeof(struct unetchannel));
-
-	memcpy(&buf[sizeof(struct unetchannel_control)], ncb->head, ncb->len);
+	err = write(nc->fd, ncb->data, ncb->len);
+	if (err < 0)
+		return err;
 
 	syscall_send++;
-
-	return netchannel_control(ctl);
+	return 0;
 }
 
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
@@ -198,18 +191,20 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 }
 
 void netchannel_setup_unc(struct unetchannel *unc,
-		unsigned int laddr, unsigned short lport,
-		unsigned int faddr, unsigned short fport,
-		unsigned int proto, unsigned int state,
-		unsigned int timeout, unsigned int order)
+		unsigned int saddr, unsigned short sport,
+		unsigned int daddr, unsigned short dport,
+		unsigned int proto, unsigned int order)
 {
+	unc->mask.daddr = 0xffffffff;
+	unc->mask.saddr = 0xffffffff;
+	unc->mask.dport = 0xffff;
+	unc->mask.sport = 0xffff;
+	unc->mask.proto = 0xff;
+	unc->data.daddr = daddr;
+	unc->data.saddr = saddr;
+	unc->data.dport = dport;
+	unc->data.sport = sport;
+	unc->data.proto = proto;
 	unc->memory_limit_order = order;
-	unc->faddr = faddr;
-	unc->laddr = laddr;
-	unc->fport = htons(fport);
-	unc->lport = htons(lport);
-	unc->proto = proto;
-	unc->state = state;
-	unc->init_stat_work = timeout;
-	unc->copy = NETCHANNEL_COPY_USER;
+	unc->type = NETCHANNEL_COPY_USER;
 }

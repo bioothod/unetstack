@@ -315,6 +315,8 @@ struct netchannel
 
 	int			fd;
 
+	unsigned int		state;
+
 	struct common_protocol	*proto;	/* Must be the last member in the structure */
 };
 
@@ -330,8 +332,7 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm);
 void netchannel_setup_unc(struct unetchannel *unc,
 		unsigned int laddr, unsigned short lport,
 		unsigned int faddr, unsigned short fport,
-		unsigned int proto, unsigned int state,
-		unsigned int timeout, unsigned int order);
+		unsigned int proto, unsigned int order);
 
 static inline __u16 in_csum(__u16 *addr, unsigned int len)
 {

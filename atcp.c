@@ -61,7 +61,7 @@ enum {
 #endif
 
 #define TCP_MAX_WSCALE	14
-static __u8 atcp_offer_wscale = 7;
+static __u8 atcp_offer_wscale = 14;
 
 static __u32 atcp_max_qlen = 1024*1024;
 static __u32 atcp_def_prev_update_ratio = 3;
@@ -291,7 +291,7 @@ static inline int atcp_ncb_data_size(struct nc_buff *ncb)
 
 static inline struct nc_route *netchannel_route_get(struct netchannel *nc)
 {
-	return route_get(nc->unc.faddr, nc->unc.laddr);
+	return route_get(nc->unc.data.daddr, nc->unc.data.saddr);
 }
 
 void netchannel_route_put(struct nc_route *dst)
@@ -320,8 +320,8 @@ static int atcp_build_header(struct atcp_protocol *tp, struct nc_buff *ncb, __u3
 	ncb->h.th = th = (struct tcphdr *)ncb_push(ncb, sizeof(struct tcphdr));
 	memset(th, 0, sizeof(struct tcphdr));
 
-	th->source = tp->nc->unc.lport;
-	th->dest = tp->nc->unc.fport;
+	th->source = tp->nc->unc.data.sport;
+	th->dest = tp->nc->unc.data.dport;
 	th->seq = htonl(tp->snd_nxt);
 	th->ack_seq = htonl(tp->rcv_nxt);
 
@@ -344,8 +344,8 @@ static int atcp_build_header(struct atcp_protocol *tp, struct nc_buff *ncb, __u3
 	p = (struct pseudohdr *)(((__u8 *)th) - sizeof(struct pseudohdr));
 	memset(p, 0, sizeof(*p));
 
-	p->saddr = ncb->nc->unc.laddr;
-	p->daddr = ncb->nc->unc.faddr;
+	p->saddr = ncb->nc->unc.data.saddr;
+	p->daddr = ncb->nc->unc.data.daddr;
 	p->tp = IPPROTO_TCP;
 	p->len = htonl(ncb->len);
 
@@ -788,7 +788,7 @@ static int atcp_fast_retransmit(struct atcp_protocol *tp)
 
 static void atcp_congestion(struct atcp_protocol *tp)
 {
-	__u32 min_wind = min_t(unsigned int, tp->snd_cwnd*tp->mss, tp_rwin(tp));
+	__u32 data_wind = min_t(unsigned int, tp->snd_cwnd*tp->mss, tp_rwin(tp));
 
 	if (tp_rwin(tp) > tp->max_rwin) {
 		tp->max_rwin = tp_rwin(tp);
@@ -806,7 +806,7 @@ static void atcp_congestion(struct atcp_protocol *tp)
 	atcp_fast_retransmit(tp);
 
 	if (tp->dupack_num >= 3) {
-		tp->snd_ssthresh = max_t(unsigned int, tp->mss * 2, min_wind/2);
+		tp->snd_ssthresh = max_t(unsigned int, tp->mss * 2, data_wind/2);
 		if (tp->snd_cwnd > 1) {
 			tp->snd_cwnd >>= 1;
 			tp->snd_cwnd_bytes = tp->mss * tp->snd_cwnd;
@@ -855,12 +855,12 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 			atcp_in_slow_start(tp), tp->dupack_num, atcp_can_send(tp, NULL));
 
 	if (!ncb->len && beforeeq(ack, tp->snd_una)) {
-		ulog("%s: duplicate ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
+		printf("%s: duplicate ack: %u, snd_una: %u, snd_nxt: %u, snd_wnd: %u, snd_wl1: %u, snd_wl2: %u.\n",
 				__func__, ack, tp->snd_una, tp->snd_nxt, tp_swin(tp), tp->snd_wl1, tp->snd_wl2);
 		atcp_congestion(tp);
 		return 0;
 	} else if (after(ack, tp->snd_nxt)) {
-		ulog("%s: out of order packet: seq: %u, ack: %u, len: %u, rwin: %u.\n", __func__, seq, ack, ncb->len, rwin);
+		printf("%s: out of order packet: seq: %u, ack: %u, len: %u, rwin: %u.\n", __func__, seq, ack, ncb->len, rwin);
 		err = atcp_send_bit(tp, TCP_FLAG_ACK);
 		if (err < 0)
 			goto out;
@@ -886,7 +886,7 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 		}
 		tp->snd_una = ack;
 		atcp_check_retransmit_queue(tp, ack);
-		
+#if 1
 		if (before(tp->snd_wl1, seq) || ((tp->snd_wl1 == seq) && beforeeq(tp->snd_wl2, ack))) {
 			ulog("%s: Window update: snd_wnd: %u [%u], new: %u, wl1: %u, seq: %u, wl2: %u, ack: %u.\n",
 					__func__, tp->snd_wnd, tp_swin(tp), ntohs(th->window),
@@ -895,14 +895,14 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 			tp->snd_wl1 = seq;
 			tp->snd_wl2 = ack;
 		}
-	
+#endif
 	}
 
 	if (beforeeq(seq, tp->rcv_nxt) && aftereq(end_seq, tp->rcv_nxt)) {
 		tp->rcv_nxt = end_seq;
 		ncb_queue_check(tp, &tp->ofo_queue);
 	} else {
-		ulog("Out of order: rwin: %u, swin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
+		printf("Out of order: rwin: %u, swin: %u, seq: %u, rcv_nxt: %u, size: %u.\n", 
 				rwin, tp_swin(tp), seq, tp->rcv_nxt, ncb->len);
 		
 		ncb_queue_order(ncb, &tp->ofo_queue);
@@ -918,7 +918,7 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 		ncb_queue_order(ncb, &tp->ofo_queue);
 
 		tp->ack_missed_bytes += ncb->len;
-		if (atcp_in_slow_start(tp) == 1 || tp->ack_missed_bytes >= (__u32)1*tp->mss || ++tp->ack_missed >= 1) {
+		if (atcp_in_slow_start(tp) == 1 || tp->ack_missed_bytes >= (__u32)3*tp->mss || ++tp->ack_missed >= 3) {
 			tp->ack_missed_bytes = 0;
 			tp->ack_missed = 0;
 			err = atcp_send_bit(tp, TCP_FLAG_ACK);
@@ -934,7 +934,8 @@ static int atcp_established(struct atcp_protocol *tp, struct nc_buff *ncb)
 
 	err = ncb->len;
 out:
-	ulog("%s: return: %d.\n", __func__, err);
+	if (err < 0)
+		printf("%s: return: %d.\n", __func__, err);
 	return err;
 }
 
@@ -1246,8 +1247,8 @@ static int atcp_state_machine_run(struct atcp_protocol *tp, struct nc_buff *ncb)
 
 	ulog("R %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u [r: %u, s: %u], doff: %u, "
 			"s: %u, a: %u, p: %u, r: %u, f: %u, len: %u, state: %u, ncb: %p, snd_una: %u, snd_nxt: %u.\n",
-		NIPQUAD(tp->nc->unc.laddr), ntohs(tp->nc->unc.lport),
-		NIPQUAD(tp->nc->unc.faddr), ntohs(tp->nc->unc.fport),
+		NIPQUAD(tp->nc->unc.data.saddr), ntohs(tp->nc->unc.data.sport),
+		NIPQUAD(tp->nc->unc.data.daddr), ntohs(tp->nc->unc.data.dport),
 		seq, ack, ntohs(th->window), rwin, tp_swin(tp), th->doff,
 		th->syn, th->ack, th->psh, th->rst, th->fin,
 		ncb->len, tp->state, ncb, tp->snd_una, tp->snd_nxt);
@@ -1325,12 +1326,6 @@ static int atcp_state_machine_run(struct atcp_protocol *tp, struct nc_buff *ncb)
 	}
 
 out:
-#if 0
-	ulog("E %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, state: %u, err: %d.\n",
-		NIPQUAD(tp->nc->unc.laddr), ntohs(tp->nc->unc.lport),
-		NIPQUAD(tp->nc->unc.faddr), ntohs(tp->nc->unc.fport),
-		ntohl(th->seq), ntohl(th->ack_seq), tp->state, err);
-#endif
 	if (err < 0) {
 		__u32 flags = TCP_FLAG_RST;
 		if (th->ack) {
@@ -1483,7 +1478,7 @@ static int atcp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 
 	if (atcp_retransmit_time(tp))
 		atcp_retransmit(tp);
-
+	
 	return read;
 }
 
@@ -1493,7 +1488,7 @@ static int atcp_create(struct netchannel *nc)
 
 	get_random_bytes(&tp->iss, sizeof(tp->iss));
 	tp->snd_wl1 = tp->snd_wl2 = 0;
-	tp->snd_wnd = 1024;
+	tp->snd_wnd = 0xffff;
 	tp->snd_nxt = tp->iss;
 	tp->rcv_wnd = 0xffff;
 	tp->rwscale = 0;
@@ -1511,9 +1506,9 @@ static int atcp_create(struct netchannel *nc)
 	ncb_queue_init(&tp->ofo_queue);
 	tp->send_head = (struct nc_buff *)&tp->retransmit_queue;
 
-	if (nc->unc.state == NETCHANNEL_ATCP_LISTEN)
+	if (nc->state == NETCHANNEL_ATCP_LISTEN)
 		return atcp_init_listen(nc);
-	else if (nc->unc.state == NETCHANNEL_ATCP_CONNECT) {
+	else if (nc->state == NETCHANNEL_ATCP_CONNECT) {
 		int err;
 
 		err = atcp_connect(nc);
