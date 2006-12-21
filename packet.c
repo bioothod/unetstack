@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
 	if (err)
 		return err;
 
-	netchannel_setup_unc(&unc, src, sport, dst, dport, proto, order);
+	netchannel_setup_unc(&unc, src, htons(sport), dst, htons(dport), proto, order);
 	nc = netchannel_create(&unc);
 	if (!nc)
 		return -EINVAL;
@@ -190,8 +190,10 @@ int main(int argc, char *argv[])
 
 	sent = recv = 0;
 
+	printf("size: %u.\n", size);
+
 	while (!need_exit) {
-		err = netchannel_send(nc, str, size);
+		err = netchannel_recv(nc, str, size);
 		ulog("%s: recv: err: %d.\n", __func__, err);
 		if (err > 0) {
 			stat_written += err;

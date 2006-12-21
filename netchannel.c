@@ -93,7 +93,22 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 	memcpy(&nc->unc, unc, sizeof(struct unetchannel));
 
 	memset(&ctl, 0, sizeof(struct unetchannel_control));
-	memcpy(&ctl.unc, unc, sizeof(struct unetchannel));
+
+	ctl.unc.mask.saddr = unc->mask.daddr;
+	ctl.unc.mask.daddr = unc->mask.saddr;
+	ctl.unc.mask.sport = unc->mask.dport;
+	ctl.unc.mask.dport = unc->mask.sport;
+	
+	ctl.unc.data.saddr = unc->data.daddr;
+	ctl.unc.data.daddr = unc->data.saddr;
+	ctl.unc.data.sport = unc->data.dport;
+	ctl.unc.data.dport = unc->data.sport;
+	
+	ctl.unc.mask.proto = unc->mask.proto;
+	ctl.unc.data.proto = unc->data.proto;
+
+	ctl.unc.memory_limit_order = unc->memory_limit_order;
+	ctl.unc.type = unc->type;
 
 	ctl.cmd = NETCHANNEL_CREATE;
 	err = netchannel_control(&ctl);
@@ -172,7 +187,8 @@ int netchannel_send_raw(struct nc_buff *ncb)
 	struct netchannel *nc = ncb->nc;
 	int err;
 
-	err = write(nc->fd, ncb->data, ncb->len);
+	//err = write(nc->fd, ncb->data, ncb->len);
+	err = write(nc->fd, ncb->head, ncb->len);
 	if (err < 0)
 		return err;
 
