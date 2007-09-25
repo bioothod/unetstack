@@ -36,6 +36,8 @@
 #include <arpa/inet.h>
 #include <netpacket/packet.h>
 
+#include <linux/if_ether.h>
+
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 
@@ -44,6 +46,9 @@
 
 static int need_exit;
 static int alarm_timeout = 1;
+
+extern unsigned char packet_edst[];
+extern int packet_index;
 
 static void term_signal(int signo)
 {
@@ -95,9 +100,35 @@ static unsigned int packet_convert_addr(char *addr_str, unsigned int *addr)
 	return 0;
 }
 
+static int packet_parse_addr(char *str, unsigned char addr[])
+{
+	int i;
+	char *p = str;
+
+	/*
+	 * 00:11:22:33:44:55
+	 */
+	if (strlen(str) != 2*ETH_ALEN + ETH_ALEN-1) {
+		ulog("Wrong ethernet address string '%s', it has to be in the wollowing form: 00:11:22:33:44:55.\n",
+				str);
+		return -EINVAL;
+	}
+
+	for (i=0; i<ETH_ALEN; ++i) {
+		p = str+2;
+		*p = 0;
+
+		addr[i] = strtoul(str, NULL, 16);
+
+		str = p+1;
+	}
+
+	return 0;
+}
+
 static void usage(const char *p)
 {
-	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -l -o order -h\n", p);
+	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -l <listen> -o mem_order -h -b size -e eth_dst_addr -i eth_out_index\n", p);
 }
 
 int main(int argc, char *argv[])
@@ -124,8 +155,16 @@ int main(int argc, char *argv[])
 	order = 20;
 	size = sizeof(str);
 
-	while ((ch = getopt(argc, argv, "n:s:d:S:D:hp:t:lo:b:")) != -1) {
+	while ((ch = getopt(argc, argv, "e:i:s:d:S:D:hp:lb:")) != -1) {
 		switch (ch) {
+			case 'i':
+				packet_index = atoi(optarg);
+				break;
+			case 'e':
+				err = packet_parse_addr(optarg, packet_edst);
+				if (err)
+					return err;
+				break;
 			case 'b':
 				size = atoi(optarg);
 				if (size > sizeof(str))

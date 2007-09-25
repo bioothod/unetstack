@@ -6,6 +6,10 @@ CC	:= gcc
 CFLAGS	:= -I$(KDIR)/include -W -Wall -g -O3
 LDFLAGS := -lc
 
+ifdef NETCHANNEL
+CFLAGS += -DKERNEL_NETCHANNEL
+endif
+
 ifdef DEBUG
 CFLAGS += -DUDEBUG
 endif

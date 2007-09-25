@@ -38,7 +38,12 @@
 #include <netinet/ip.h>
 #include <arpa/inet.h>
 
+#include <linux/if_ether.h>
+
 #include "sys.h"
+
+int packet_index = 1;
+unsigned char packet_edst[ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
 #ifdef KERNEL_NETCHANNEL
 #include <linux/unistd.h>
@@ -118,15 +123,29 @@ int netchannel_send_raw(struct nc_buff *ncb)
 }
 
 #else
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+
+static void netchannel_prepare_sockaddr(struct sockaddr_ll *sa)
+{
+	memset(sa, 0, sizeof(struct sockaddr_ll));
+
+	sa->sll_family 	= PF_PACKET;
+	sa->sll_protocol = htons(ETH_P_IP);
+	sa->sll_halen 	= ETH_ALEN;
+	sa->sll_ifindex = packet_index;
+	sa->sll_pkttype = PACKET_OUTGOING;
+
+	memcpy(sa->sll_addr, packet_edst, ETH_ALEN);
+}
 
 int netchannel_send_raw(struct nc_buff *ncb)
 {
 	struct netchannel *nc = ncb->nc;
 	int err;
-	struct sockaddr_in sa;
+	struct sockaddr_ll sa;
 
-	memcpy(&sa.sin_addr.s_addr, &ncb->nh.iph->daddr, 4);
-	sa.sin_family = AF_INET;
+	netchannel_prepare_sockaddr(&sa);
 
 	err = sendto(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, sizeof(sa));
 	if (err < 0) {
@@ -143,12 +162,10 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 	struct nc_buff *ncb;
 	int err;
 	struct pollfd pfd;
-	struct sockaddr_in sa;
+	struct sockaddr_ll sa;
 	socklen_t len = sizeof(sa);
-
-	memcpy(&sa.sin_addr.s_addr, &nc->unc.data.daddr, 4);
-	sa.sin_port = htons(22);
-	sa.sin_family = AF_INET;
+	
+	netchannel_prepare_sockaddr(&sa);
 
 	ncb = ncb_alloc(4096);
 	if (!ncb)
@@ -165,12 +182,11 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 		ulog_err("%s: failed to poll", __func__);
 		return err;
 	}
-#if 1
 	if (!(pfd.revents & POLLIN) || !err) {
 		ulog("%s: no data, revents: %x.\n", __func__, pfd.revents);
 		return -EAGAIN;
 	}
-#endif	
+
 	syscall_recv += 1;
 
 	err = recvfrom(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, &len);
@@ -197,17 +213,19 @@ err_out_free:
 
 static int netchannel_control(struct unetchannel_control *ctl)
 {
-	int s, on;
+	int s;
+	struct sockaddr_ll sa;
 
-	s = socket(PF_INET, SOCK_RAW, ctl->unc.data.proto);
+	s = socket(PF_PACKET, SOCK_DGRAM, ctl->unc.data.proto);
 	if (s < 0) {
 		ulog_err("Failed to create packet socket");
 		return -1;
 	}
+	
+	netchannel_prepare_sockaddr(&sa);
 
-	on = 1;
-	if (setsockopt(s, SOL_IP, IP_HDRINCL, &on, 4)) {
-		ulog_err("Failed to set socket option");
+	if (bind(s, (struct sockaddr *)&sa, sizeof(struct sockaddr_ll))) {
+		ulog_err("bind");
 		close(s);
 		return -1;
 	}
