@@ -199,7 +199,7 @@ static int netchannel_control(struct unetchannel_control *ctl)
 {
 	int s, on;
 
-	s = socket(PF_INET, SOCK_RAW, IPPROTO_TCP);
+	s = socket(PF_INET, SOCK_RAW, ctl->unc.data.proto);
 	if (s < 0) {
 		ulog_err("Failed to create packet socket");
 		return -1;
