@@ -24,9 +24,43 @@ Supported features:
     * support for TCP listen state (only point-to-point mode, i.e. no new data channels are created, 
 	when new client is connected, instead state is changed according to protocol 
 	(TCP state is changed to ESTABLISHED).
+    * ability to work with netchannels and packet socket.
 
 Project homepage:
 http://tservice.net.ru/~s0mbre/old/?section=projects&item=unetstack
 
 1. Netchannel subsystem.
 http://tservice.net.ru/~s0mbre/old/?section=projects&item=netchannel
+
+Compilation options.
+make DEBUG=1 will enable huge amount of debug information
+make NETCHANNEL=1 will use kernel netchannel subsystem instead of packet socket
+
+Command line parameters.
+-s saddr - source address of netchannel
+-d daddr - destination address
+-S sport - source port
+-D dport - destination port
+
+-p proto - protocol number (-6 - tcp (default), -17 - udp)
+
+-l - create listen netchannel
+
+-o mem_order - receive queue size (2^mem_order)
+
+-b size - size of the message being sent by example code
+
+-e eth_dst_addr - (used with packet socket) - remote ethernet address in 00:11:22:33:44:FF form
+-i eth_out_index - (used with packet socket) - index of the device, which is used to send data,
+	usually 'lo' has 1, 'ethN' has N+1. If you renamed devices, then use 'ip addr' utility to find
+	this index (first number in the output lines).
+
+-h - help
+
+Examples.
+
+TCP session:
+sudo ./stack -s 192.168.4.81 -S 12345 -d 192.168.0.48 -D 22 -i 2 -e 00:11:09:61:EB:0E
+
+This will create a TCP connection between 192.168.4.81:12345 and 192.168.0.24:22 via eth0 device.
+Remote mac address (of the machine which owns 192.168.0.48 IP address) is 00:11:09:61:EB:0E.
