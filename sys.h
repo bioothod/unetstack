@@ -377,4 +377,6 @@ extern int route_add(struct nc_route *rt);
 extern void route_fini(void);
 extern int route_init(void);
 
+extern unsigned long syscall_recv, syscall_send;
+
 #endif /* __SYS_H */

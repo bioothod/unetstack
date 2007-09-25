@@ -39,6 +39,8 @@
 #include <arpa/inet.h>
 
 #include "sys.h"
+
+#ifdef KERNEL_NETCHANNEL
 #include <linux/unistd.h>
 
 #define _syscall1(type,name,type1,arg1) \
@@ -48,6 +50,172 @@ type name (type1 arg1) \
 }
 
 _syscall1(int, netchannel_control, void *, arg1);
+
+int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
+{
+	struct nc_buff *ncb;
+	int err;
+	struct pollfd pfd;
+
+	ncb = ncb_alloc(4096);
+	if (!ncb)
+		return -ENOMEM;
+
+	pfd.fd = nc->fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+
+	syscall_recv += 1;
+
+	err = poll(&pfd, 1, tm);
+	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
+		return err;
+	}
+
+	if (!(pfd.revents & POLLIN) || !err) {
+		ulog("%s: no data.\n", __func__);
+		return -EAGAIN;
+	}
+	
+	syscall_recv += 1;
+
+	err = read(nc->fd, ncb->head, ncb->len);
+	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
+		return err;
+	}
+	if (err == 0)
+		return -EAGAIN;
+
+	ncb_trim(ncb, err);
+	ncb->nc = nc;
+
+	err = packet_ip_process(ncb);
+	if (err)
+		goto err_out_free;
+
+	return 0;
+
+err_out_free:
+	ncb_put(ncb);
+	return err;
+}
+
+int netchannel_send_raw(struct nc_buff *ncb)
+{
+	struct netchannel *nc = ncb->nc;
+	int err;
+
+	err = write(nc->fd, ncb->head, ncb->len);
+	if (err < 0) {
+		ulog_err("Failed to send a packet: len: %u, fd: %d", ncb->len, nc->fd);
+		return err;
+	}
+
+	syscall_send++;
+	return 0;
+}
+
+#else
+
+int netchannel_send_raw(struct nc_buff *ncb)
+{
+	struct netchannel *nc = ncb->nc;
+	int err;
+	struct sockaddr_in sa;
+
+	memcpy(&sa.sin_addr.s_addr, &ncb->nh.iph->daddr, 4);
+	sa.sin_family = AF_INET;
+
+	err = sendto(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, sizeof(sa));
+	if (err < 0) {
+		ulog_err("Failed to send a packet: len: %u, fd: %d", ncb->len, nc->fd);
+		return err;
+	}
+
+	syscall_send++;
+	return 0;
+}
+
+int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
+{
+	struct nc_buff *ncb;
+	int err;
+	struct pollfd pfd;
+	struct sockaddr_in sa;
+	socklen_t len = sizeof(sa);
+
+	memcpy(&sa.sin_addr.s_addr, &nc->unc.data.daddr, 4);
+	sa.sin_port = htons(22);
+	sa.sin_family = AF_INET;
+
+	ncb = ncb_alloc(4096);
+	if (!ncb)
+		return -ENOMEM;
+
+	pfd.fd = nc->fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+
+	syscall_recv += 1;
+
+	err = poll(&pfd, 1, tm);
+	if (err < 0) {
+		ulog_err("%s: failed to poll", __func__);
+		return err;
+	}
+#if 1
+	if (!(pfd.revents & POLLIN) || !err) {
+		ulog("%s: no data, revents: %x.\n", __func__, pfd.revents);
+		return -EAGAIN;
+	}
+#endif	
+	syscall_recv += 1;
+
+	err = recvfrom(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, &len);
+	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
+		return err;
+	}
+	if (err == 0)
+		return -EAGAIN;
+
+	ncb_trim(ncb, err);
+	ncb->nc = nc;
+
+	err = packet_ip_process(ncb);
+	if (err)
+		goto err_out_free;
+
+	return 0;
+
+err_out_free:
+	ncb_put(ncb);
+	return err;
+}
+
+static int netchannel_control(struct unetchannel_control *ctl)
+{
+	int s, on;
+
+	s = socket(PF_INET, SOCK_RAW, IPPROTO_TCP);
+	if (s < 0) {
+		ulog_err("Failed to create packet socket");
+		return -1;
+	}
+
+	on = 1;
+	if (setsockopt(s, SOL_IP, IP_HDRINCL, &on, 4)) {
+		ulog_err("Failed to set socket option");
+		close(s);
+		return -1;
+	}
+
+	return s;
+}
+
+#endif
 
 static void netchannel_dump(struct netchannel *nc, char *str, int err)
 {
@@ -128,73 +296,6 @@ struct netchannel *netchannel_create(struct unetchannel *unc, unsigned int state
 	}
 
 	return nc;
-}
-
-extern unsigned long syscall_recv, syscall_send;
-
-int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
-{
-	struct nc_buff *ncb;
-	int err;
-	struct pollfd pfd;
-
-	ncb = ncb_alloc(4096);
-	if (!ncb)
-		return -ENOMEM;
-
-	pfd.fd = nc->fd;
-	pfd.events = POLLIN;
-	pfd.revents = 0;
-
-	syscall_recv += 1;
-
-	err = poll(&pfd, 1, tm);
-	if (err < 0) {
-		ulog_err("%s: failed to read", __func__);
-		return err;
-	}
-
-	if (!(pfd.revents & POLLIN) || !err) {
-		ulog("%s: no data.\n", __func__);
-		return -EAGAIN;
-	}
-	
-	syscall_recv += 1;
-
-	err = read(nc->fd, ncb->head, ncb->len);
-	if (err < 0) {
-		ulog_err("%s: failed to read", __func__);
-		return err;
-	}
-	if (err == 0)
-		return -EAGAIN;
-
-	ncb_trim(ncb, err);
-	ncb->nc = nc;
-
-	err = packet_ip_process(ncb);
-	if (err)
-		goto err_out_free;
-
-	return 0;
-
-err_out_free:
-	ncb_put(ncb);
-	return err;
-}
-
-int netchannel_send_raw(struct nc_buff *ncb)
-{
-	struct netchannel *nc = ncb->nc;
-	int err;
-
-	//err = write(nc->fd, ncb->data, ncb->len);
-	err = write(nc->fd, ncb->head, ncb->len);
-	if (err < 0)
-		return err;
-
-	syscall_send++;
-	return 0;
 }
 
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
