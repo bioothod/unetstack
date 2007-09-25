@@ -1452,6 +1452,9 @@ static int atcp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 	int err = 0;
 	unsigned int read = 0;
 
+	if (tp->state == TCP_CLOSE)
+		return -ECONNRESET;
+
 	while (size) {
 		if (!ncb_queue_empty(&tp->ofo_queue)) {
 			err = atcp_read_data(tp, buf, size);
