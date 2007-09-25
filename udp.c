@@ -84,6 +84,9 @@ static int udp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 	struct nc_buff *ncb;
 	unsigned int read;
 
+	if (ncb_queue_empty(&nc->recv_queue))
+		netchannel_recv_raw(nc, 100);
+
 	ncb = ncb_dequeue(&nc->recv_queue);
 	if (!ncb)
 		return -EAGAIN;
