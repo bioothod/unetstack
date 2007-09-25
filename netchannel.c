@@ -66,7 +66,7 @@ void netchannel_remove(struct netchannel *nc)
 	netchannel_dump(nc, "remove", 0);
 }
 
-struct netchannel *netchannel_create(struct unetchannel *unc)
+struct netchannel *netchannel_create(struct unetchannel *unc, unsigned int state)
 {
 	struct unetchannel_control ctl;
 	int err;
@@ -88,6 +88,7 @@ struct netchannel *netchannel_create(struct unetchannel *unc)
 	ncb_queue_init(&nc->recv_queue);
 
 	nc->proto = (struct common_protocol *)(nc + 1);
+	nc->state = state;
 
 	memcpy(nc->proto, proto, sizeof(struct common_protocol));
 	memcpy(&nc->unc, unc, sizeof(struct unetchannel));

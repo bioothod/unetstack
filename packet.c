@@ -177,10 +177,9 @@ int main(int argc, char *argv[])
 		return err;
 
 	netchannel_setup_unc(&unc, src, htons(sport), dst, htons(dport), proto, order);
-	nc = netchannel_create(&unc);
+	nc = netchannel_create(&unc, state);
 	if (!nc)
 		return -EINVAL;
-	nc->state = state;
 
 	signal(SIGTERM, term_signal);
 	signal(SIGINT, term_signal);

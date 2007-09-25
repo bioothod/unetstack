@@ -320,7 +320,7 @@ struct netchannel
 	struct common_protocol	*proto;	/* Must be the last member in the structure */
 };
 
-struct netchannel *netchannel_create(struct unetchannel *unc);
+struct netchannel *netchannel_create(struct unetchannel *unc, unsigned int state);
 void netchannel_remove(struct netchannel *nc);
 int netchannel_bind(struct netchannel *nc);
 
