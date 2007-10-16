@@ -62,10 +62,6 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 	int err;
 	struct pollfd pfd;
 
-	ncb = ncb_alloc(4096);
-	if (!ncb)
-		return -ENOMEM;
-
 	pfd.fd = nc->fd;
 	pfd.events = POLLIN;
 	pfd.revents = 0;
@@ -92,6 +88,10 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 	}
 	if (err == 0)
 		return -EAGAIN;
+
+	ncb = ncb_alloc(4096);
+	if (!ncb)
+		return -ENOMEM;
 
 	ncb_trim(ncb, err);
 	ncb->nc = nc;
