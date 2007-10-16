@@ -167,10 +167,6 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 	
 	netchannel_prepare_sockaddr(&sa);
 
-	ncb = ncb_alloc(4096);
-	if (!ncb)
-		return -ENOMEM;
-
 	pfd.fd = nc->fd;
 	pfd.events = POLLIN;
 	pfd.revents = 0;
@@ -189,13 +185,20 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 
 	syscall_recv += 1;
 
+	ncb = ncb_alloc(4096);
+	if (!ncb)
+		return -ENOMEM;
+
 	err = recvfrom(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, &len);
 	if (err < 0) {
 		ulog_err("%s: failed to read", __func__);
-		return err;
+		err = -errno;
+		goto err_out_free;
 	}
-	if (err == 0)
-		return -EAGAIN;
+	if (err == 0) {
+		err = -EAGAIN;
+		goto err_out_free;
+	}
 
 	ncb_trim(ncb, err);
 	ncb->nc = nc;
