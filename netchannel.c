@@ -81,17 +81,19 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 	
 	syscall_recv += 1;
 
-	err = read(nc->fd, ncb->head, ncb->len);
-	if (err < 0) {
-		ulog_err("%s: failed to read", __func__);
-		return err;
-	}
-	if (err == 0)
-		return -EAGAIN;
-
 	ncb = ncb_alloc(4096);
 	if (!ncb)
 		return -ENOMEM;
+
+	err = read(nc->fd, ncb->head, ncb->len);
+	if (err < 0) {
+		ulog_err("%s: failed to read", __func__);
+		goto err_out_free;
+	}
+	if (err == 0) {
+		err = -EAGAIN;
+		goto err_out_free;
+	}
 
 	ncb_trim(ncb, err);
 	ncb->nc = nc;
@@ -125,6 +127,9 @@ int netchannel_send_raw(struct nc_buff *ncb)
 #else
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
+
+#include <unistd.h>
+#include <fcntl.h>
 
 static void netchannel_prepare_sockaddr(struct sockaddr_ll *sa)
 {
@@ -188,24 +193,24 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 	ncb = ncb_alloc(4096);
 	if (!ncb)
 		return -ENOMEM;
-
-	err = recvfrom(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, &len);
-	if (err < 0) {
-		ulog_err("%s: failed to read", __func__);
-		err = -errno;
-		goto err_out_free;
-	}
-	if (err == 0) {
-		err = -EAGAIN;
-		goto err_out_free;
-	}
-
-	ncb_trim(ncb, err);
 	ncb->nc = nc;
 
-	err = packet_ip_process(ncb);
-	if (err)
-		goto err_out_free;
+	do {
+		err = recvfrom(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, &len);
+		if (err < 0) {
+			ulog_err("%s: failed to read", __func__);
+			err = -errno;
+			goto err_out_free;
+		}
+
+		ncb_trim(ncb, err);
+
+		err = packet_ip_process(ncb);
+		if (err) {
+			err = 1;
+			ncb_put(ncb);
+		}
+	} while (err > 0);
 
 	return 0;
 
@@ -224,7 +229,7 @@ static int netchannel_control(struct unetchannel_control *ctl)
 		ulog_err("Failed to create packet socket");
 		return -1;
 	}
-	
+
 	netchannel_prepare_sockaddr(&sa);
 
 	if (bind(s, (struct sockaddr *)&sa, sizeof(struct sockaddr_ll))) {
