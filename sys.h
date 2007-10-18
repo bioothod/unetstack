@@ -262,13 +262,13 @@ static inline void ncb_unlink(struct nc_buff *ncb, struct nc_buff_head *head)
 	head->qlen--;
 }
 
-static inline void ncb_timestamp(struct nc_buff *ncb)
+static inline void ncb_timestamp(struct ncb_timeval *tv)
 {
 	struct timeval tm;
 
 	gettimeofday(&tm, NULL);
-	ncb->tstamp.off_sec = tm.tv_sec;
-	ncb->tstamp.off_usec = tm.tv_usec;
+	tv->off_sec = tm.tv_sec;
+	tv->off_usec = tm.tv_usec;
 }
 
 static inline void netchannel_flush_list_head(struct nc_buff_head *list)

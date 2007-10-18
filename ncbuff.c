@@ -44,7 +44,7 @@ struct nc_buff *ncb_alloc(unsigned int size)
 	}
 	memset(ncb->data, 0, ncb->total_size);
 
-	ncb_timestamp(ncb);
+	ncb_timestamp(&ncb->tstamp);
 	ncb->refcnt = 1;
 	ncb->tail = ncb->end = ncb->head + ncb->len;
 
