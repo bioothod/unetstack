@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
 	printf("size: %u.\n", size);
 
 	while (!need_exit) {
-		err = netchannel_recv(nc, str, size);
+		err = netchannel_send(nc, str, size);
 		ulog("%s: recv: err: %d.\n", __func__, err);
 		if (err > 0) {
 			stat_written += err;
