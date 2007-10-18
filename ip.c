@@ -1,9 +1,9 @@
 /*
  * 	ip.c
- * 
+ *
  * 2006 Copyright (c) Evgeniy Polyakov <johnpol@2ka.mipt.ru>
  * All rights reserved.
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -76,13 +76,20 @@ int ip_send_data(struct nc_buff *ncb)
 int packet_ip_process(struct nc_buff *ncb)
 {
 	struct iphdr *iph;
+	struct unetchannel *u = &ncb->nc->unc;
 
 	ncb->nh.iph = iph = ncb_pull(ncb, sizeof(struct iphdr));
 	if (!iph)
 		return -ENOMEM;
-	
+
 	ncb_pull(ncb, iph->ihl * 4 - sizeof(struct iphdr));
 	ncb_trim(ncb, ntohs(iph->tot_len) - iph->ihl * 4);
+
+	ulog("%s: packet: %u.%u.%u.%u -> %u.%u.%u.%u.\n",
+			__func__, NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
+
+	if (iph->saddr != u->data.daddr || iph->daddr != u->data.saddr)
+		return -EINVAL;
 
 	ncb_queue_tail(&ncb->nc->recv_queue, ncb);
 	ncb->nc->hit++;
