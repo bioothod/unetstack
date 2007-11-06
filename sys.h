@@ -28,7 +28,11 @@
 
 #include <linux/types.h>
 #include <linux/unistd.h>
+#ifdef KERNEL_NETCHANNEL
 #include <linux/netchannel.h>
+#else
+#include "netchannel.h"
+#endif
 
 #define PACKET_NAME	"packet"
 
