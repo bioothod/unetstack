@@ -65,7 +65,6 @@ enum {
 #define TCP_MAX_WSCALE	14
 static __u8 atcp_offer_wscale = 14;
 
-static __u32 atcp_max_qlen = 1024*1024;
 static __u32 atcp_def_prev_update_ratio = 3;
 static unsigned int atcp_default_timeout = 1000;	/* In milliseconds */
 
@@ -175,7 +174,6 @@ static inline int between(__u32 seq1, __u32 seq2, __u32 seq3)
 	return seq3 - seq2 >= seq1 - seq2;
 }
 
-static __u32 atcp_time;
 static inline __u32 atcp_packet_timestamp(void)
 {
 	struct ncb_timeval tv;
@@ -1030,21 +1028,6 @@ static struct state_machine atcp_state_machine[] = {
 	{ .state = TCP_LISTEN, .run = atcp_listen, },
 	{ .state = TCP_CLOSING, .run = atcp_closing, },
 };
-
-#ifdef UDEBUG
-static void atcp_work(void *data)
-{
-	struct atcp_protocol *tp = data;
-
-	ulog("%s: cwnd: %u [%u], ssthresh: %u, ss: %d, in_flight: %u [%u], dupack [%u, %u], rwin: %u, swin: %u, can_send: %u, max_rwin: %u, prev: %u.\n",
-			__func__, tp->snd_cwnd, tp->snd_cwnd_bytes, 
-			tp->snd_ssthresh, atcp_in_slow_start(tp), 
-			tp->in_flight, tp->in_flight_bytes, 
-			tp->dupack_num, tp->dupack_seq,
-			tp_rwin(tp), tp_swin(tp), atcp_can_send(tp, NULL), tp->max_rwin,
-			tp->prev_update_ratio);
-}
-#endif
 
 static int atcp_init_listen(struct netchannel *nc)
 {

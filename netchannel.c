@@ -243,6 +243,7 @@ static int netchannel_control(struct unetchannel_control *ctl)
 
 #endif
 
+#ifdef UDEBUG
 static void netchannel_dump(struct netchannel *nc, char *str, int err)
 {
 	ulog("netchannel: %s [%u.%u.%u.%u:%u, %u.%u.%u.%u:%u] -> [%u.%u.%u.%u:%u, %u.%u.%u.%u:%u], "
@@ -253,6 +254,13 @@ static void netchannel_dump(struct netchannel *nc, char *str, int err)
 			nc->unc.data.proto, nc->unc.mask.proto, 
 			nc->unc.type, nc->unc.memory_limit_order, (1<<nc->unc.memory_limit_order), err);
 }
+#else
+static void netchannel_dump(struct netchannel *nc __attribute__ ((unused)),
+		char *str __attribute__ ((unused)),
+		int err __attribute__ ((unused)))
+{
+}
+#endif
 
 void netchannel_remove(struct netchannel *nc)
 {
