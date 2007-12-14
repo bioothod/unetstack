@@ -70,7 +70,7 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 
 	err = poll(&pfd, 1, tm);
 	if (err < 0) {
-		ulog_err("%s: failed to read", __func__);
+		ulog_err("%s: failed to poll", __func__);
 		return err;
 	}
 
@@ -78,7 +78,7 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 		ulog("%s: no data.\n", __func__);
 		return -EAGAIN;
 	}
-	
+
 	syscall_recv += 1;
 
 	ncb = ncb_alloc(4096);
@@ -165,7 +165,7 @@ int netchannel_send_raw(struct nc_buff *ncb)
 int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 {
 	struct nc_buff *ncb;
-	int err;
+	int err, received = 0;
 	struct pollfd pfd;
 	struct sockaddr_ll sa;
 	socklen_t len = sizeof(sa);
@@ -190,12 +190,12 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 
 	syscall_recv += 1;
 
-	ncb = ncb_alloc(4096);
-	if (!ncb)
-		return -ENOMEM;
-	ncb->nc = nc;
-
 	do {
+		ncb = ncb_alloc(4096);
+		if (!ncb)
+			return -ENOMEM;
+		ncb->nc = nc;
+
 		err = recvfrom(nc->fd, ncb->head, ncb->len, 0, (struct sockaddr *)&sa, &len);
 		if (err < 0) {
 			ulog_err("%s: failed to read", __func__);
@@ -210,7 +210,8 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 			err = 1;
 			ncb_put(ncb);
 		}
-	} while (err > 0);
+		++received;
+	} while (err > 0 && ++received < 50);
 
 	return 0;
 
