@@ -1381,7 +1381,7 @@ static int atcp_read_data(struct atcp_protocol *tp, __u8 *buf, unsigned int size
 		ulog("Copy: seq_read: %u, seq: %u, end_seq: %u, size: %u, off: %u, data_size: %u, sz: %u, read: %d.\n",
 				tp->seq_read, seq, end_seq, size, off, data_size, sz, read);
 
-		memcpy(buf, ncb->data+off, sz);
+		memcpy(buf, ncb->head+off, sz);
 
 		buf += sz;
 		read += sz;
@@ -1483,7 +1483,7 @@ static int atcp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 
 	if (atcp_retransmit_time(tp))
 		atcp_retransmit(tp);
-	
+
 	return read;
 }
 
