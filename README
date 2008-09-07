@@ -11,11 +11,10 @@ in packet.c file.
 Supported features:
 
     * TCP/UDP sending and receiving.
-    * Timestamp, window scaling, MSS TCP options.
+    * timestamp, window scaling, MSS TCP options.
     * PAWS.
-    * Slow start and congestion control.
-    * Route table (including startic ARP cache).
-    * Socket-like interface.
+    * slow start and congestion control.
+    * socket-like interface.
     * IP processing code.
     * complete retransmit algorithm.
     * fast retransmit support.
@@ -46,7 +45,7 @@ Command line parameters.
 
 -l - create listen netchannel
 
--o mem_order - receive queue size (2^mem_order)
+-L - maximum number of packets in the netchannel kernel queue. Default 1024.
 
 -b size - size of the message being sent by example code
 
