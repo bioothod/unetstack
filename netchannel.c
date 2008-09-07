@@ -48,14 +48,6 @@ unsigned char packet_edst[ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 #ifdef KERNEL_NETCHANNEL
 #include <linux/unistd.h>
 
-#define _syscall1(type,name,type1,arg1) \
-type name (type1 arg1) \
-{\
-	return syscall(__NR_##name, arg1);\
-}
-
-_syscall1(int, netchannel_control, void *, arg1);
-
 int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 {
 	struct nc_buff *ncb;
@@ -70,7 +62,6 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 
 	err = poll(&pfd, 1, tm);
 	if (err < 0) {
-		ulog_err("%s: failed to poll", __func__);
 		return err;
 	}
 
@@ -87,7 +78,10 @@ int netchannel_recv_raw(struct netchannel *nc, unsigned int tm)
 
 	err = read(nc->fd, ncb->head, ncb->len);
 	if (err < 0) {
-		ulog_err("%s: failed to read", __func__);
+		if (errno == EAGAIN)
+			err = -EAGAIN;
+		else
+			ulog_err("%s: failed to read", __func__);
 		goto err_out_free;
 	}
 	if (err == 0) {
@@ -122,6 +116,11 @@ int netchannel_send_raw(struct nc_buff *ncb)
 
 	syscall_send++;
 	return 0;
+}
+
+static int netchannel_create_raw(struct netchannel *nc)
+{
+	return syscall(__NR_netchannel_create, &nc->ctl);
 }
 
 #else
@@ -220,12 +219,12 @@ err_out_free:
 	return err;
 }
 
-static int netchannel_control(struct unetchannel_control *ctl)
+static int netchannel_create_raw(struct netchannel *nc)
 {
 	int s;
 	struct sockaddr_ll sa;
 
-	s = socket(PF_PACKET, SOCK_DGRAM, ctl->unc.data.proto);
+	s = socket(PF_PACKET, SOCK_DGRAM, nc->ctl.saddr.proto);
 	if (s < 0) {
 		ulog_err("Failed to create packet socket");
 		return -1;
@@ -244,41 +243,20 @@ static int netchannel_control(struct unetchannel_control *ctl)
 
 #endif
 
-#ifdef UDEBUG
-static void netchannel_dump(struct netchannel *nc, char *str, int err)
-{
-	ulog("netchannel: %s [%u.%u.%u.%u:%u, %u.%u.%u.%u:%u] -> [%u.%u.%u.%u:%u, %u.%u.%u.%u:%u], "
-			"proto: [%u, %u], type: %u, order: %u [%u], err: %d.\n",
-			str, 
-			NIPQUAD(nc->unc.data.saddr), ntohs(nc->unc.data.sport), NIPQUAD(nc->unc.mask.saddr), ntohs(nc->unc.mask.sport),
-			NIPQUAD(nc->unc.data.daddr), ntohs(nc->unc.data.dport), NIPQUAD(nc->unc.mask.daddr), ntohs(nc->unc.mask.dport),
-			nc->unc.data.proto, nc->unc.mask.proto, 
-			nc->unc.type, nc->unc.memory_limit_order, (1<<nc->unc.memory_limit_order), err);
-}
-#else
-static void netchannel_dump(struct netchannel *nc __attribute__ ((unused)),
-		char *str __attribute__ ((unused)),
-		int err __attribute__ ((unused)))
-{
-}
-#endif
-
 void netchannel_remove(struct netchannel *nc)
 {
 	close(nc->fd);
-	netchannel_dump(nc, "remove", 0);
 }
 
-struct netchannel *netchannel_create(struct unetchannel *unc, unsigned int state)
+struct netchannel *netchannel_create(struct netchannel_control *ctl, unsigned int state)
 {
-	struct unetchannel_control ctl;
 	int err;
 	struct common_protocol *proto;
 	struct netchannel *nc;
 
-	if (unc->data.proto == IPPROTO_TCP)
+	if (ctl->saddr.proto == IPPROTO_TCP)
 		proto = &atcp_common_protocol;
-	else if (unc->data.proto == IPPROTO_UDP)
+	else if (ctl->saddr.proto == IPPROTO_UDP)
 		proto = &udp_common_protocol;
 	else
 		return NULL;
@@ -292,45 +270,26 @@ struct netchannel *netchannel_create(struct unetchannel *unc, unsigned int state
 
 	nc->proto = (struct common_protocol *)(nc + 1);
 	nc->state = state;
+	nc->header_size = MAX_HEADER_SIZE;
 
 	memcpy(nc->proto, proto, sizeof(struct common_protocol));
-	memcpy(&nc->unc, unc, sizeof(struct unetchannel));
+	memcpy(&nc->ctl, ctl, sizeof(struct netchannel_control));
 
-	memset(&ctl, 0, sizeof(struct unetchannel_control));
-
-	ctl.unc.mask.saddr = unc->mask.daddr;
-	ctl.unc.mask.daddr = unc->mask.saddr;
-	ctl.unc.mask.sport = unc->mask.dport;
-	ctl.unc.mask.dport = unc->mask.sport;
-	
-	ctl.unc.data.saddr = unc->data.daddr;
-	ctl.unc.data.daddr = unc->data.saddr;
-	ctl.unc.data.sport = unc->data.dport;
-	ctl.unc.data.dport = unc->data.sport;
-	
-	ctl.unc.mask.proto = unc->mask.proto;
-	ctl.unc.data.proto = unc->data.proto;
-
-	ctl.unc.memory_limit_order = unc->memory_limit_order;
-	ctl.unc.type = unc->type;
-
-	ctl.cmd = NETCHANNEL_CREATE;
-	err = netchannel_control(&ctl);
-	if (err < 0 && errno == EEXIST)
-		err = 0;
-	else if (err > 0) {
-		nc->fd = err;
-		err = nc->proto->create(nc);
+	nc->fd = netchannel_create_raw(nc);
+	if (nc->fd < 0) {
+		ulog_err("Failed to create netchannel");
+		goto err_out_free;
 	}
 
-	netchannel_dump(nc, "create", err);
-
-	if (err) {
-		free(nc);
-		nc = NULL;
-	}
+	err = nc->proto->create(nc);
+	if (err)
+		goto err_out_free;
 
 	return nc;
+
+err_out_free:
+	free(nc);
+	return NULL;
 }
 
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
@@ -341,23 +300,4 @@ int netchannel_send(struct netchannel *nc, void *buf, unsigned int size)
 int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size)
 {
 	return nc->proto->process_in(nc, buf, size);
-}
-
-void netchannel_setup_unc(struct unetchannel *unc,
-		unsigned int saddr, unsigned short sport,
-		unsigned int daddr, unsigned short dport,
-		unsigned int proto, unsigned int order)
-{
-	unc->mask.daddr = 0xffffffff;
-	unc->mask.saddr = 0xffffffff;
-	unc->mask.dport = 0xffff;
-	unc->mask.sport = 0xffff;
-	unc->mask.proto = 0xff;
-	unc->data.daddr = daddr;
-	unc->data.saddr = saddr;
-	unc->data.dport = dport;
-	unc->data.sport = sport;
-	unc->data.proto = proto;
-	unc->memory_limit_order = order;
-	unc->type = NETCHANNEL_COPY_USER;
 }

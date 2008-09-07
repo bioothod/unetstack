@@ -63,14 +63,6 @@ struct nc_buff_head {
 
 struct netchannel;
 
-struct nc_route
-{
-	__u32			src, dst;
-	__u8			proto;
-	unsigned int		header_size;
-	int			refcnt;
-};
-
 struct ncb_timeval
 {
 	__u32		off_sec;
@@ -107,8 +99,6 @@ struct nc_buff
 		struct iphdr	*iph;
 		void		*raw;
 	} nh;
-
-	struct nc_route		*dst;
 
 	struct ncb_timeval	tstamp;
 
@@ -313,18 +303,18 @@ struct common_protocol
 struct netchannel
 {
 	struct nc_buff_head 	recv_queue;
-	struct unetchannel	unc;
+	struct netchannel_control	ctl;
 
 	unsigned long long	hit;
 
 	int			fd;
 
-	unsigned int		state;
+	unsigned int		state, header_size;
 
 	struct common_protocol	*proto;	/* Must be the last member in the structure */
 };
 
-struct netchannel *netchannel_create(struct unetchannel *unc, unsigned int state);
+struct netchannel *netchannel_create(struct netchannel_control *ctl, unsigned int state);
 void netchannel_remove(struct netchannel *nc);
 int netchannel_bind(struct netchannel *nc);
 
@@ -332,11 +322,6 @@ int netchannel_recv(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_send(struct netchannel *nc, void *buf, unsigned int size);
 int netchannel_send_raw(struct nc_buff *ncb);
 int netchannel_recv_raw(struct netchannel *nc, unsigned int tm);
-
-void netchannel_setup_unc(struct unetchannel *unc,
-		unsigned int laddr, unsigned short lport,
-		unsigned int faddr, unsigned short fport,
-		unsigned int proto, unsigned int order);
 
 static inline __u16 in_csum(__u16 *addr, unsigned int len)
 {
@@ -374,12 +359,6 @@ static inline __u32 num2ip(const __u8 a1, const __u8 a2, const __u8 a3, const __
 
 	return r;
 }
-
-extern struct nc_route *route_get(__u32 dst, __u32 src);
-extern void route_put(struct nc_route *);
-extern int route_add(struct nc_route *rt);
-extern void route_fini(void);
-extern int route_init(void);
 
 extern unsigned long syscall_recv, syscall_send;
 

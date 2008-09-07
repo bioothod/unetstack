@@ -31,6 +31,7 @@ struct udp_protocol
 {
 	struct common_protocol	cproto;
 	struct nc_buff_head	receive_queue;
+	struct netchannel	*nc;
 };
 
 struct pseudohdr
@@ -50,28 +51,32 @@ static int udp_connect(struct netchannel *nc)
 {
 	struct udp_protocol *up = udp_convert(nc->proto);
 	ncb_queue_init(&up->receive_queue);
+	up->nc = nc;
 	return 0;
 }
 
-static int udp_build_header(struct udp_protocol *up __attribute__ ((unused)), struct nc_buff *ncb)
+static int udp_build_header(struct udp_protocol *up, struct nc_buff *ncb)
 {
 	struct udphdr *uh;
 	struct pseudohdr *p;
+	struct netchannel *nc = up->nc;
+	struct netchannel_addr *src = &nc->ctl.saddr;
+	struct netchannel_addr *dst = &nc->ctl.daddr;
 
 	uh = ncb->h.uh = ncb_push(ncb, sizeof(struct udphdr));
 	if (!uh)
 		return -ENOMEM;
 	
-	uh->source = ncb->nc->unc.data.sport;
-	uh->dest = ncb->nc->unc.data.dport;
+	uh->source = src->port;
+	uh->dest = dst->port;
 	uh->len = htons(ncb->len);
 	uh->check = 0;
 	
 	p = (struct pseudohdr *)(((__u8 *)uh) - sizeof(struct pseudohdr));
 	memset(p, 0, sizeof(*p));
 
-	p->saddr = ncb->nc->unc.data.saddr;
-	p->daddr = ncb->nc->unc.data.daddr;
+	memcpy(&p->saddr, src->addr, sizeof(p->saddr));
+	memcpy(&p->daddr, dst->addr, sizeof(p->daddr));
 	p->tp = IPPROTO_UDP;
 	p->len = htonl(ncb->len);
 
@@ -104,23 +109,16 @@ static int udp_process_out(struct netchannel *nc, void *buf, unsigned int size)
 	struct nc_buff *ncb;
 	int err;
 	struct udp_protocol *up = udp_convert(nc->proto);
-	struct nc_route *dst;
 
-	dst = route_get(nc->unc.data.daddr, nc->unc.data.saddr);
-	if (!dst)
-		return -ENODEV;
-
-	ncb = ncb_alloc(size + dst->header_size);
+	ncb = ncb_alloc(size + nc->header_size);
 	if (!ncb) {
 		err = -ENOMEM;
-		goto err_out_put;
+		goto err_out_exit;
 	}
 
-	ncb->dst = dst;
-	ncb->dst->proto = nc->unc.data.proto;
 	ncb->nc = nc;
 
-	ncb_pull(ncb, dst->header_size);
+	ncb_pull(ncb, nc->header_size);
 
 	memcpy(ncb->head, buf, size);
 
@@ -132,14 +130,11 @@ static int udp_process_out(struct netchannel *nc, void *buf, unsigned int size)
 	if (err)
 		goto err_out_free;
 
-	route_put(dst);
-
 	return size;
 
 err_out_free:
 	ncb_put(ncb);
-err_out_put:
-	route_put(dst);
+err_out_exit:
 	return err;
 }
 

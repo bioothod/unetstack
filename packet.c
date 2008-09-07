@@ -65,7 +65,7 @@ int transmit_data(struct nc_buff *ncb)
 {
 	int err;
 #if defined UDEBUG
-	if (ncb->dst->proto == IPPROTO_TCP) {
+	if (ncb->nc->ctl.saddr.proto == IPPROTO_TCP) {
 		struct iphdr *iph = ncb->nh.iph;
 		struct tcphdr *th = ncb->h.th;
 
@@ -86,17 +86,34 @@ int transmit_data(struct nc_buff *ncb)
 	return 0;
 }
 
-static unsigned int packet_convert_addr(char *addr_str, unsigned int *addr)
+static int netchannel_addr_init(struct netchannel_addr *a, char *addr, unsigned short port, int proto)
 {
-	struct hostent *h;
+	struct addrinfo *h, hints;
 
-	h = gethostbyname(addr_str);
-	if (!h) {
-		ulog_err("%s: Failed to get address of %s", __func__, addr_str);
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_protocol = proto;
+
+	if (getaddrinfo(addr, "", &hints, &h)) {
+		ulog_err("%s: Failed to get address of '%s'.\n", __func__, addr);
 		return -1;
 	}
-	
-	memcpy(addr, h->h_addr_list[0], 4);
+
+	if (h->ai_family == AF_INET) {
+		struct sockaddr_in *sa = (struct sockaddr_in *)h->ai_addr;
+
+		a->size = sizeof(sa->sin_addr);
+		memcpy(&a->addr, &sa->sin_addr, a->size);
+	} else {
+		struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)h->ai_addr;
+
+		a->size = sizeof(sa6->sin6_addr);
+		memcpy(&a->addr, &sa6->sin6_addr, a->size);
+	}
+
+	a->proto = proto;
+	a->port = htons(port);
+
+	freeaddrinfo(h);
 	return 0;
 }
 
@@ -128,34 +145,30 @@ static int packet_parse_addr(char *str, unsigned char addr[])
 
 static void usage(const char *p)
 {
-	ulog_info("Usage: %s -s saddr -d daddr -S sport -D dport -p proto -l <listen> -o mem_order -h -b size -e eth_dst_addr -i eth_out_index\n", p);
+	ulog_info("Usage: %s -s saddr -S sport -d daddr -D dport -p proto -l <listen> -L packet_limit -b size -e eth_dst_addr -i eth_out_index -h\n", p);
 }
 
 int main(int argc, char *argv[])
 {
 	int err, ch, sent, recv;
-	struct unetchannel unc;
 	struct netchannel *nc;
-	char *saddr, *daddr;
-	__u32 src, dst;
+	char *src, *dst;
 	__u16 sport, dport;
 	__u8 proto;
-	struct nc_route rt;
+	struct netchannel_control ctl;
 	char str[4096];
-	unsigned int state, order, size;
+	unsigned int state, size, limit;
 
 	srand(time(NULL));
 
-	saddr = "192.168.4.78";
-	daddr = "192.168.0.48";
-	sport = rand();
-	dport = 1025;
+	src = dst = NULL;
+	sport = dport = 0;
 	proto = IPPROTO_TCP;
 	state = NETCHANNEL_ATCP_CONNECT;
-	order = 20;
 	size = sizeof(str);
+	limit = 1024;
 
-	while ((ch = getopt(argc, argv, "e:i:s:d:S:D:hp:lb:")) != -1) {
+	while ((ch = getopt(argc, argv, "e:i:s:d:S:D:hp:lL:b:")) != -1) {
 		switch (ch) {
 			case 'i':
 				packet_index = atoi(optarg);
@@ -170,11 +183,11 @@ int main(int argc, char *argv[])
 				if (size > sizeof(str))
 					size = sizeof(str);
 				break;
-			case 'o':
-				order = atoi(optarg);
-				break;
 			case 'l':
 				state = NETCHANNEL_ATCP_LISTEN;
+				break;
+			case 'L':
+				limit = atoi(optarg);
 				break;
 			case 'p':
 				proto = atoi(optarg);
@@ -186,10 +199,10 @@ int main(int argc, char *argv[])
 				sport = atoi(optarg);
 				break;
 			case 'd':
-				daddr = optarg;
+				dst = optarg;
 				break;
 			case 's':
-				saddr = optarg;
+				src = optarg;
 				break;
 			default:
 				usage(argv[0]);
@@ -197,26 +210,22 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (packet_convert_addr(saddr, &src) || packet_convert_addr(daddr, &dst)) {
+	if (!src || !dst || !sport || !dport) {
 		usage(argv[0]);
 		return -1;
 	}
 
-	err = route_init();
+	err = netchannel_addr_init(&ctl.saddr, src, sport, proto);
+	if (err)
+		return err;
+	
+	err = netchannel_addr_init(&ctl.daddr, dst, dport, proto);
 	if (err)
 		return err;
 
-	rt.header_size = MAX_HEADER_SIZE;
-	rt.src = src;
-	rt.dst = dst;
-	rt.proto = proto;
+	ctl.packet_limit = limit;
 
-	err = route_add(&rt);
-	if (err)
-		return err;
-
-	netchannel_setup_unc(&unc, src, htons(sport), dst, htons(dport), proto, order);
-	nc = netchannel_create(&unc, state);
+	nc = netchannel_create(&ctl, state);
 	if (!nc)
 		return -EINVAL;
 

@@ -1,5 +1,5 @@
 #KDIR	:= /lib/modules/$(shell uname -r)/build
-KDIR	:= /home/s0mbre/aWork/git/linux-2.6/linux-2.6.net
+KDIR	:= /home/zbr/aWork/git/linux-2.6/linux-2.6.netchannels
 PWD	:= $(shell pwd)
 CC	:= gcc
 
@@ -14,7 +14,7 @@ ifdef DEBUG
 CFLAGS += -DUDEBUG
 endif
 
-OBJS := atcp.o udp.o ip.o netchannel.o packet.o ncbuff.o route.o stat.o
+OBJS := atcp.o udp.o ip.o netchannel.o packet.o ncbuff.o stat.o
 TARGETS	:= stack
 
 all: $(OBJS) $(TARGETS)
@@ -28,7 +28,6 @@ udp.o:		udp.c sys.h Makefile
 ip.o:		ip.c sys.h Makefile
 netchannel.o:	netchannel.c sys.h Makefile
 ncbuff.o:	ncbuff.c sys.h Makefile
-route.o:	route.c sys.h Makefile
 packet.o:	packet.c sys.h Makefile
 stat.o:		stat.c stat.h sys.h Makefile
 

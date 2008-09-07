@@ -22,17 +22,14 @@
 #ifndef __NETCHANNEL_H
 #define __NETCHANNEL_H
 
-#include <linux/types.h>
+#define NETCHANNEL_ADDR_SIZE		16
 
-enum netchannel_commands {
-	NETCHANNEL_CREATE = 0,
-};
-
-enum netchannel_type {
-	NETCHANNEL_EMPTY = 0,
-	NETCHANNEL_COPY_USER,
-	NETCHANNEL_NAT,
-	NETCHANNEL_MAX
+struct netchannel_addr
+{
+	unsigned char			proto;
+	unsigned char			size;
+	unsigned short			port;
+	unsigned char			addr[NETCHANNEL_ADDR_SIZE];
 };
 
 /*
@@ -40,41 +37,10 @@ enum netchannel_type {
  * i.e. when packet is being received, destination is local address.
  */
 
-struct unetdata
+struct netchannel_control
 {
-	__u32			saddr, daddr;
-	__u16			sport, dport;
-	__u8			proto;			/* IP protocol number */
-	__u8			reserved[3];
-};
-
-struct unetchannel
-{
-	struct unetdata		data, mask;
-	__u32			prio;			/* Netchanenl's priority. */
-	__u32			type;			/* Netchannel type: copy_to_user, NAT or something */
-	__u8			memory_limit_order;	/* Memor limit order */
-	__u8			reserved[3];
-};
-
-struct unetchannel_control
-{
-	struct unetchannel	unc;
-	__u32			cmd;
-	__u16			len, header_len;
-	__u32			flags;
-	__u32			timeout;
-	int			fd;
-};
-
-#define NETCHANNEL_NAT_CREATE	0x0
-#define NETCHANNEL_NAT_REMOVE	0x1
-
-struct netchannel_nat
-{
-	__u32			cmd;
-	struct unetchannel	flow;
-	struct unetdata		target;
+	struct netchannel_addr		saddr, daddr;
+	unsigned int			packet_limit;
 };
 
 #endif /* __NETCHANNEL_H */

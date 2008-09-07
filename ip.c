@@ -42,13 +42,17 @@
 int ip_build_header(struct nc_buff *ncb)
 {
 	struct iphdr *iph;
+	struct netchannel *nc = ncb->nc;
+	struct netchannel_addr *src = &nc->ctl.saddr;
+	struct netchannel_addr *dst = &nc->ctl.daddr;
 
 	ncb->nh.iph = iph = ncb_push(ncb, sizeof(struct iphdr));
 	if (!iph)
 		return -ENOMEM;
 
-	iph->saddr = ncb->dst->src;
-	iph->daddr = ncb->dst->dst;
+	memcpy(&iph->saddr, src->addr, sizeof(iph->saddr));
+	memcpy(&iph->daddr, dst->addr, sizeof(iph->daddr));
+
 	iph->check = 0;
 	iph->tos = 0x10;
 	iph->tot_len = htons(ncb->len);
@@ -57,7 +61,7 @@ int ip_build_header(struct nc_buff *ncb)
 	iph->frag_off = htons(0x4000);
 	iph->version = 4;
 	iph->ihl = 5;
-	iph->protocol = ncb->dst->proto;
+	iph->protocol = src->proto;
 
 	iph->check = in_csum((__u16 *)iph, iph->ihl*4);
 	return 0;
@@ -76,7 +80,9 @@ int ip_send_data(struct nc_buff *ncb)
 int packet_ip_process(struct nc_buff *ncb)
 {
 	struct iphdr *iph;
-	struct unetchannel *u = &ncb->nc->unc;
+	struct netchannel *nc = ncb->nc;
+	struct netchannel_addr *src = &nc->ctl.saddr;
+	struct netchannel_addr *dst = &nc->ctl.daddr;
 
 	ncb->nh.iph = iph = ncb_pull(ncb, sizeof(struct iphdr));
 	if (!iph)
@@ -85,17 +91,14 @@ int packet_ip_process(struct nc_buff *ncb)
 	ncb_pull(ncb, iph->ihl * 4 - sizeof(struct iphdr));
 	ncb_trim(ncb, ntohs(iph->tot_len) - iph->ihl * 4);
 
-	ulog("%s: packet: %u.%u.%u.%u -> %u.%u.%u.%u.\n",
-			__func__, NIPQUAD(iph->saddr), NIPQUAD(iph->daddr));
-
-	if (iph->saddr != u->data.daddr || iph->daddr != u->data.saddr)
+	if (memcmp(&iph->saddr, dst->addr, 4))
+		return -EINVAL;
+	
+	if (memcmp(&iph->daddr, src->addr, 4))
 		return -EINVAL;
 
 	ncb_queue_tail(&ncb->nc->recv_queue, ncb);
 	ncb->nc->hit++;
-
-	ulog("%s: queued packet: %u.%u.%u.%u -> %u.%u.%u.%u, hit: %llu.\n",
-			__func__, NIPQUAD(iph->saddr), NIPQUAD(iph->daddr), ncb->nc->hit);
 
 	return 0;
 }

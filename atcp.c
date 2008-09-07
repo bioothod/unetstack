@@ -292,14 +292,19 @@ static inline int atcp_ncb_data_size(struct nc_buff *ncb)
 	return (int)(__u32)(TCP_NCB_CB(ncb)->end_seq - TCP_NCB_CB(ncb)->seq);
 }
 
-static inline struct nc_route *netchannel_route_get(struct netchannel *nc)
+static int atcp_start_itimer(struct atcp_protocol *tp)
 {
-	return route_get(nc->unc.data.daddr, nc->unc.data.saddr);
+	tp->timer.it_interval.tv_sec = 0;
+	tp->timer.it_interval.tv_usec = 1000;
+	tp->timer.it_value.tv_sec = 0;
+	tp->timer.it_value.tv_usec = 1000;
+
+	return setitimer(ITIMER_REAL, &tp->timer, NULL);
 }
 
-void netchannel_route_put(struct nc_route *dst)
+static void atcp_alarm(int signo __attribute__ ((unused)))
 {
-	route_put(dst);
+	atcp_packet_timestamp();
 }
 
 static int atcp_build_header(struct atcp_protocol *tp, struct nc_buff *ncb, __u32 flags, __u8 doff)
@@ -308,6 +313,9 @@ static int atcp_build_header(struct atcp_protocol *tp, struct nc_buff *ncb, __u3
 	struct pseudohdr *p;
 	struct atcp_option_nop *nop;
 	struct atcp_option_timestamp *ts;
+	struct netchannel *nc = tp->nc;
+	struct netchannel_addr *src = &nc->ctl.saddr;
+	struct netchannel_addr *dst = &nc->ctl.daddr;
 
 	nop = (struct atcp_option_nop *)ncb_push(ncb, sizeof(struct atcp_option_nop));
 	nop->kind = 1;
@@ -323,8 +331,8 @@ static int atcp_build_header(struct atcp_protocol *tp, struct nc_buff *ncb, __u3
 	ncb->h.th = th = (struct tcphdr *)ncb_push(ncb, sizeof(struct tcphdr));
 	memset(th, 0, sizeof(struct tcphdr));
 
-	th->source = tp->nc->unc.data.sport;
-	th->dest = tp->nc->unc.data.dport;
+	th->source = src->port;
+	th->dest = dst->port;
 	th->seq = htonl(tp->snd_nxt);
 	th->ack_seq = htonl(tp->rcv_nxt);
 
@@ -347,8 +355,8 @@ static int atcp_build_header(struct atcp_protocol *tp, struct nc_buff *ncb, __u3
 	p = (struct pseudohdr *)(((__u8 *)th) - sizeof(struct pseudohdr));
 	memset(p, 0, sizeof(*p));
 
-	p->saddr = ncb->nc->unc.data.saddr;
-	p->daddr = ncb->nc->unc.data.daddr;
+	memcpy(&p->saddr, src->addr, sizeof(p->saddr));
+	memcpy(&p->daddr, dst->addr, sizeof(p->daddr));
 	p->tp = IPPROTO_TCP;
 	p->len = htonl(ncb->len);
 
@@ -377,34 +385,26 @@ static int atcp_send_data(struct atcp_protocol *tp, struct nc_buff *ncb, __u32 f
 static int atcp_send_bit(struct atcp_protocol *tp, __u32 flags)
 {
 	struct nc_buff *ncb;
-	int err;
-	struct nc_route *dst;
+	int err, header_size = tp->nc->header_size;
 
-	dst = netchannel_route_get(tp->nc);
-	if (!dst)
-		return -ENODEV;
-
-	ncb = ncb_alloc(dst->header_size);
+	ncb = ncb_alloc(header_size);
 	if (!ncb) {
 		err = -ENOMEM;
-		goto err_out_put;
+		goto err_out_exit;
 	}
-	ncb->dst = dst;
 	ncb->nc = tp->nc;
 
-	ncb_pull(ncb, dst->header_size);
+	ncb_pull(ncb, header_size);
 
 	err = atcp_send_data(tp, ncb, flags, 0);
 	if (err)
 		goto err_out_free;
 	
-	netchannel_route_put(dst);
 	return 0;
 
 err_out_free:
 	ncb_put(ncb);
-err_out_put:
-	netchannel_route_put(dst);
+err_out_exit:
 	return err;
 }
 
@@ -751,7 +751,10 @@ static int atcp_syn_recv(struct atcp_protocol *tp, struct nc_buff *ncb)
 		if (between(ack, tp->snd_una, tp->snd_nxt)) {
 			tp->seq_read = ntohl(th->seq) + 1;
 			atcp_set_state(tp, TCP_ESTABLISHED);
-			return 0;
+
+			ncb_timestamp(&tp->first_packet_ts);
+
+			return atcp_start_itimer(tp);
 		}
 	}
 
@@ -1068,21 +1071,15 @@ static int atcp_connect(struct netchannel *nc)
 	struct atcp_option_mss *mss;
 	struct atcp_option_wscale *wscale;
 	struct atcp_option_nop *nop;
-	struct nc_route *dst;
-	
-	dst = netchannel_route_get(nc);
-	if (!dst)
-		return -ENODEV;
 
-	ncb = ncb_alloc(dst->header_size);
+	ncb = ncb_alloc(nc->header_size);
 	if (!ncb) {
 		err = -ENOMEM;
-		goto err_out_put;
+		goto err_out_exit;
 	}
-	ncb->dst = dst;
 	ncb->nc = nc;
 
-	ncb_pull(ncb, dst->header_size);
+	ncb_pull(ncb, nc->header_size);
 
 	mss = (struct atcp_option_mss *)ncb_push(ncb, sizeof(struct atcp_option_mss));
 	mss->kind = TCP_OPT_MSS;
@@ -1100,15 +1097,13 @@ static int atcp_connect(struct netchannel *nc)
 	err = atcp_send_data(tp, ncb, TCP_FLAG_SYN, ncb->len/4);
 	if (err < 0)
 		goto err_out_free;
-	route_put(dst);
 
 	atcp_set_state(tp, TCP_SYN_SENT);
 	return 0;
 
 err_out_free:
 	ncb_put(ncb);
-err_out_put:
-	route_put(dst);
+err_out_exit:
 	return err;
 }
 
@@ -1267,10 +1262,8 @@ static int atcp_state_machine_run(struct atcp_protocol *tp, struct nc_buff *ncb)
 	__u32 seq = TCP_NCB_CB(ncb)->seq;
 	__u32 ack = TCP_NCB_CB(ncb)->ack_seq;
 
-	ulog("R %u.%u.%u.%u:%u <-> %u.%u.%u.%u:%u : seq: %u, ack: %u, win: %u [r: %u, s: %u], doff: %u, "
+	ulog("R: seq: %u, ack: %u, win: %u [r: %u, s: %u], doff: %u, "
 			"s: %u, a: %u, p: %u, r: %u, f: %u, len: %u, state: %u, ncb: %p, snd_una: %u, snd_nxt: %u.\n",
-		NIPQUAD(tp->nc->unc.data.saddr), ntohs(tp->nc->unc.data.sport),
-		NIPQUAD(tp->nc->unc.data.daddr), ntohs(tp->nc->unc.data.dport),
 		seq, ack, ntohs(th->window), rwin, tp_swin(tp), th->doff,
 		th->syn, th->ack, th->psh, th->rst, th->fin,
 		ncb->len, tp->state, ncb, tp->snd_una, tp->snd_nxt);
@@ -1444,10 +1437,10 @@ static struct nc_buff *atcp_process_in_ncb(struct netchannel *nc, unsigned int *
 		return NULL;
 	}
 
-	if (th->source != nc->unc.data.dport || th->dest != nc->unc.data.sport) {
+	if (th->source != nc->ctl.daddr.port || th->dest != nc->ctl.saddr.port) {
 		ulog("%s: wrong ports: %u -> %u, should be %u -> %u.\n",
 				__func__, ntohs(th->source), ntohs(th->dest),
-				ntohs(nc->unc.data.dport), ntohs(nc->unc.data.sport));
+				ntohs(nc->ctl.daddr.port), ntohs(nc->ctl.saddr.port));
 		return ncb;
 	}
 
@@ -1511,27 +1504,9 @@ static int atcp_process_in(struct netchannel *nc, void *buf, unsigned int size)
 	return read;
 }
 
-static int atcp_start_itimer(struct atcp_protocol *tp)
-{
-	tp->timer.it_interval.tv_sec = 0;
-	tp->timer.it_interval.tv_usec = 1000;
-	tp->timer.it_value.tv_sec = 0;
-	tp->timer.it_value.tv_usec = 1000;
-
-	return setitimer(ITIMER_REAL, &tp->timer, NULL);
-}
-
-static void atcp_alarm(int signo __attribute__ ((unused)))
-{
-	atcp_packet_timestamp();
-}
-
 static int atcp_create(struct netchannel *nc)
 {
 	struct atcp_protocol *tp = atcp_convert(nc->proto);
-	int err;
-
-	ncb_timestamp(&tp->first_packet_ts);
 
 	get_random_bytes(&tp->iss, sizeof(tp->iss));
 	tp->snd_wl1 = tp->snd_wl2 = 0;
@@ -1554,14 +1529,17 @@ static int atcp_create(struct netchannel *nc)
 	tp->send_head = (struct nc_buff *)&tp->retransmit_queue;
 
 	signal(SIGALRM, atcp_alarm);
-	err = atcp_start_itimer(tp);
-	if (err)
-		return err;
 
 	if (nc->state == NETCHANNEL_ATCP_LISTEN)
 		return atcp_init_listen(nc);
 	else if (nc->state == NETCHANNEL_ATCP_CONNECT) {
 		int err;
+
+		ncb_timestamp(&tp->first_packet_ts);
+
+		err = atcp_start_itimer(tp);
+		if (err)
+			return err;
 
 		err = atcp_connect(nc);
 		if (err)
@@ -1574,7 +1552,7 @@ static int atcp_create(struct netchannel *nc)
 				return 0;
 			if (tp->state == TCP_CLOSE)
 				return -ECONNRESET;
-		} while (err > 0);
+		} while (err >= 0 || err == -EAGAIN);
 
 		return -1;
 	}
@@ -1607,15 +1585,9 @@ static int atcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int
 				goto out;
 			}
 
-			ncb->dst = netchannel_route_get(nc);
-			if (!ncb->dst) {
-				err = -ENODEV;
-				goto out;
-			}
-	
 			ncb->nc = nc;
 
-			ncb_pull(ncb, ncb->dst->header_size);
+			ncb_pull(ncb, nc->header_size);
 			
 			ncb->tail = ncb->head;
 			ncb->len = 0;
@@ -1623,9 +1595,8 @@ static int atcp_transmit_combined(struct netchannel *nc, void *buf, unsigned int
 			tp->last_ncb = ncb;
 
 			tp->qlen += ncb_tailroom(ncb);
-			ulog("%s: last ncb: %p, size: %u, tail_len: %u, proto: %u.\n", 
-					__func__, ncb, ncb->len, ncb_tailroom(ncb),
-					ncb->dst->proto);
+			ulog("%s: last ncb: %p, size: %u, tail_len: %u.\n", 
+					__func__, ncb, ncb->len, ncb_tailroom(ncb));
 		}
 
 		copy = min_t(unsigned int, ncb_tailroom(ncb), data_size);
@@ -1675,27 +1646,21 @@ static int atcp_transmit_data(struct netchannel *nc, void *buf, unsigned int dat
 	struct nc_buff *ncb;
 	unsigned int size;
 	int err, sent = 0;
-	struct nc_route *dst;
-
-	dst = netchannel_route_get(nc);
-	if (!dst)
-		return -ENODEV;
 
 	while (data_size) {
-		size = min_t(unsigned int, tp->mss, dst->header_size + data_size);
+		size = min_t(unsigned int, tp->mss, nc->header_size + data_size);
 
 		ncb = ncb_alloc(size);
 		if (!ncb) {
 			sent = -ENOMEM;
-			goto err_out_put;
+			break;
 		}
-		ncb->dst = dst;
 		ncb->nc = nc;
 
-		ncb_pull(ncb, ncb->dst->header_size);
+		ncb_pull(ncb, nc->header_size);
 		ncb->tail = ncb->head;
 		ncb->len = 0;
-		size -= ncb->dst->header_size;
+		size -= nc->header_size;
 
 		err = ncb_add_data(ncb, buf, size);
 		if (err) {
@@ -1727,9 +1692,6 @@ static int atcp_transmit_data(struct netchannel *nc, void *buf, unsigned int dat
 		data_size -= size;
 		sent += size;
 	}
-
-err_out_put:
-	netchannel_route_put(dst);
 
 	return sent;
 }
