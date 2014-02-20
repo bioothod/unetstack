@@ -558,6 +558,9 @@ static void atcp_check_retransmit_queue(struct atcp_protocol *tp, __u32 ack)
 	if (!n)
 		goto out;
 
+	if (tp->in_flight == 0)
+		goto out;
+
 	do {
 		__u32 seq, end_seq;
 
@@ -1562,7 +1565,7 @@ static int atcp_create(struct netchannel *nc)
 
 static int ncb_add_data(struct nc_buff *ncb, void *buf, unsigned int size)
 {
-	memcpy(ncb->head, buf, size);
+	memcpy(ncb->tail, buf, size);
 	ncb->tail += size;
 	ncb->len += size;
 	return 0;
@@ -1694,6 +1697,29 @@ static int atcp_transmit_data(struct netchannel *nc, void *buf, unsigned int dat
 	}
 
 	return sent;
+}
+
+/*
+ * atcp_flush_combined - flush out data hanging in last_ncb
+ */
+int atcp_flush_combined(struct atcp_protocol *tp)
+{
+	int err = 0;
+	struct nc_buff *ncb = tp->last_ncb;
+
+	/*
+	 * Flush out last data, if necessary
+	 */
+	if (ncb) {
+		err = atcp_build_header(tp, ncb, TCP_FLAG_PSH|TCP_FLAG_ACK, 0);
+		if (err)
+			ncb_put(ncb);
+		else
+			ncb_queue_tail(&tp->retransmit_queue, ncb);
+		tp->last_ncb = NULL;
+		err = atcp_try_to_transmit(tp, ncb);
+	}
+	return err;
 }
 
 static int atcp_process_out(struct netchannel *nc, void *buf, unsigned int data_size)
